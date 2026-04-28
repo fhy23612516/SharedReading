@@ -318,6 +318,7 @@ window.__APP_CONFIG__ = {
 17. [deploy/nginx.shared-reading.conf](</E:/Program Files/VibeCoding/SharedReading/deploy/nginx.shared-reading.conf>)
 18. [.env.example](</E:/Program Files/VibeCoding/SharedReading/.env.example>)
 19. [服务器配置记录与小程序迁移.md](</E:/Program Files/VibeCoding/SharedReading/服务器配置记录与小程序迁移.md>)
+20. [后续迭代设计-账号反馈MySQL性能.md](</E:/Program Files/VibeCoding/SharedReading/后续迭代设计-账号反馈MySQL性能.md>)
 
 ## 当前产品规则
 
@@ -338,8 +339,13 @@ window.__APP_CONFIG__ = {
 
 下一步建议优先继续补这些：
 
-1. 正式小程序端页面和发布配置
-2. 正式公网部署和 HTTPS 域名
-3. 更强身份安全，例如房间访问 token 或账号登录
-4. 更完整的历史记录检索和详情页
-5. 多设备、多浏览器、弱网条件下的自动化 UI 回归测试
+1. Web 和小程序共用的自有账号注册登录系统
+2. MySQL 数据库存储
+3. 用户反馈功能
+4. 响应时间优化
+5. 正式小程序端页面和发布配置
+6. 正式公网部署和 HTTPS 域名
+7. 更完整的历史记录检索和详情页
+8. 多设备、多浏览器、弱网条件下的自动化 UI 回归测试
+
+下一阶段详细设计见 [后续迭代设计-账号反馈MySQL性能.md](</E:/Program Files/VibeCoding/SharedReading/后续迭代设计-账号反馈MySQL性能.md>)。
