@@ -317,6 +317,7 @@ window.__APP_CONFIG__ = {
 16. [ecosystem.config.cjs](</E:/Program Files/VibeCoding/SharedReading/ecosystem.config.cjs>)
 17. [deploy/nginx.shared-reading.conf](</E:/Program Files/VibeCoding/SharedReading/deploy/nginx.shared-reading.conf>)
 18. [.env.example](</E:/Program Files/VibeCoding/SharedReading/.env.example>)
+19. [服务器配置记录与小程序迁移.md](</E:/Program Files/VibeCoding/SharedReading/服务器配置记录与小程序迁移.md>)
 
 ## 当前产品规则
 
