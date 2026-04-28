@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Runtime logs and local process state
+.runtime/
+*.log
+
+# Local environment files
+.env
+.env.*
+!.env.example
+ngrok.workspace.yml
+
+# Local persistent room data
+data/store.json
+data/store.json.tmp
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

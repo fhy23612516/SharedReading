@@ -1,0 +1,6 @@
+version: "3"
+
+tunnels:
+  sharedreading:
+    proto: http
+    addr: 3211
