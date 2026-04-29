@@ -77,6 +77,9 @@ function close() {
 }
 
 async function main() {
+  const frontendSource = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
+  assert.ok(!frontendSource.includes("导入 `.txt`"), "import page should not contain raw backticks inside template literal text");
+
   await listen();
   const bootstrap = await waitForServer();
   assert.ok(bootstrap.stories.length >= 1, "bootstrap should return stories");

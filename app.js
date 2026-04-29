@@ -1226,7 +1226,7 @@
       `
         <section class="panel">
           <div class="section-kicker">个人书库</div>
-          <h2 class="section-title">导入 `.txt` 或直接粘贴正文</h2>
+          <h2 class="section-title">导入 TXT 文件或直接粘贴正文</h2>
           <p class="hero-copy">导入后会保存到后端，创建房间时可以直接选择这本书。当前导入内容归你的账号所有。</p>
           ${state.authToken ? `
             <form id="book-import-form" class="form-stack">
