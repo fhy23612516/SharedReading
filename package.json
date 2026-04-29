@@ -9,5 +9,8 @@
     "start:frontend": "node frontend.server.js",
     "start:public": "node frontend.server.js",
     "test": "node tests/api-smoke.test.js"
+  },
+  "dependencies": {
+    "mysql2": "^3.11.5"
   }
 }

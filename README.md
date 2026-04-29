@@ -20,6 +20,9 @@
 6. 断线重连、恢复原身份、回到上次房间
 7. 房主关闭房间
 8. 阅读完成页和最近记录
+9. Web 和小程序共用的自有账号注册/登录接口
+10. 登录用户反馈提交和“我的反馈”列表
+11. JSON 默认存储 + MySQL 可选存储
 
 ## 端口说明
 
@@ -111,7 +114,7 @@ npm run dev
 npm.cmd test
 ```
 
-它会使用临时数据文件启动后端，验证创建身份、创建房间、加入房间、进度上报、消息幂等、关闭房间和最近记录。
+它会使用临时数据文件启动后端，验证账号注册登录、反馈、创建身份、创建房间、加入房间、进度上报、消息幂等、关闭房间和最近记录。
 
 如果你的 PowerShell 允许执行 `npm.ps1`，也可以直接运行 `npm test`。
 
@@ -153,7 +156,7 @@ server.js
         │
         ▼
 数据文件
-data/store.json / data/stories.js
+data/store.json 或 MySQL / data/stories.js
 ```
 
 ### 关键时序
@@ -279,6 +282,14 @@ window.__APP_CONFIG__ = {
 2. `HOST`
 3. `CORS_ORIGIN`
 4. `STORE_PATH`
+5. `STORAGE_DRIVER`
+6. `AUTH_TOKEN_TTL_DAYS`
+7. `DB_HOST`
+8. `DB_PORT`
+9. `DB_USER`
+10. `DB_PASSWORD`
+11. `DB_NAME`
+12. `DB_CONNECTION_LIMIT`
 
 前端服务：
 
@@ -319,6 +330,8 @@ window.__APP_CONFIG__ = {
 18. [.env.example](</E:/Program Files/VibeCoding/SharedReading/.env.example>)
 19. [服务器配置记录与小程序迁移.md](</E:/Program Files/VibeCoding/SharedReading/服务器配置记录与小程序迁移.md>)
 20. [后续迭代设计-账号反馈MySQL性能.md](</E:/Program Files/VibeCoding/SharedReading/后续迭代设计-账号反馈MySQL性能.md>)
+21. [MySQL迁移与启用.md](</E:/Program Files/VibeCoding/SharedReading/MySQL迁移与启用.md>)
+22. [schema/mysql.sql](</E:/Program Files/VibeCoding/SharedReading/schema/mysql.sql>)
 
 ## 当前产品规则
 
@@ -337,15 +350,15 @@ window.__APP_CONFIG__ = {
 
 ## 当前待完善项
 
-下一步建议优先继续补这些：
+账号注册登录、用户反馈、MySQL 可选存储和 `/api` 直连优化已经具备基础实现。下一步建议继续补这些：
 
-1. Web 和小程序共用的自有账号注册登录系统
-2. MySQL 数据库存储
-3. 用户反馈功能
-4. 响应时间优化
-5. 正式小程序端页面和发布配置
-6. 正式公网部署和 HTTPS 域名
-7. 更完整的历史记录检索和详情页
-8. 多设备、多浏览器、弱网条件下的自动化 UI 回归测试
+1. 服务器正式启用 MySQL，并按需补 JSON 历史数据迁移脚本
+2. 正式小程序端页面和发布配置
+3. 正式公网部署和 HTTPS 域名
+4. 反馈后台管理和处理状态维护
+5. 更完整的历史记录检索和详情页
+6. 登录安全增强，例如限流、验证码、密码找回
+7. 多设备、多浏览器、弱网条件下的自动化 UI 回归测试
 
 下一阶段详细设计见 [后续迭代设计-账号反馈MySQL性能.md](</E:/Program Files/VibeCoding/SharedReading/后续迭代设计-账号反馈MySQL性能.md>)。
+MySQL 启用步骤见 [MySQL迁移与启用.md](</E:/Program Files/VibeCoding/SharedReading/MySQL迁移与启用.md>)。

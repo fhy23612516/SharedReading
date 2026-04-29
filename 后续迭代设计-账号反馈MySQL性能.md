@@ -1,10 +1,31 @@
 # 后续迭代设计：统一账号、反馈、MySQL 与响应优化
 
-本文档记录下一阶段需求设计，不代表当前代码已经全部实现。当前代码仍是 JSON 文件存储 + 轻量身份；下一阶段按本文档逐步改造。
+本文档记录账号、反馈、MySQL 与响应优化的需求设计和实现状态。当前代码已经完成基础版本，默认仍使用 JSON 存储；服务器需要按 `MySQL迁移与启用.md` 配置后才会切换到 MySQL。
+
+## 0. 当前实现状态
+
+已经实现：
+
+1. Web 自有账号注册、登录、退出、刷新恢复登录态。
+2. 后端 token 鉴权，写接口优先使用 `Authorization: Bearer <token>`，同时兼容旧的 `userId` 和 `name`。
+3. 登录用户提交反馈和查看自己的反馈。
+4. MySQL 可选存储层、表结构文件 `schema/mysql.sql`、环境变量配置。
+5. Nginx 模板把 `/api/` 直接代理到后端 `3210`，减少一层前端服务转发。
+6. 进度和消息接口返回轻量补丁，前端继续保留弱网本地优先和 outbox 补发。
+7. API 冒烟测试覆盖账号、反馈、房间、进度、消息和记录。
+
+仍未完成：
+
+1. JSON 历史数据自动迁移到 MySQL 的脚本。
+2. 反馈后台管理 UI 和处理状态修改接口。
+3. 小程序原生页面。
+4. WebSocket 实时通道，当前仍以 SSE 为主。
+5. 多进程或多服务器部署能力，当前 MySQL 模式仍按单个后端进程设计。
+6. 登录限流、验证码、密码找回等生产级账号安全能力。
 
 ## 1. 目标
 
-下一阶段要解决四件事：
+这一阶段要解决四件事：
 
 1. Web 和小程序使用同一套自有注册登录系统。
 2. 增加用户反馈功能。
@@ -17,12 +38,13 @@
 2. 不强制使用微信/QQ 登录。
 3. 后端接口路径尽量保持兼容，减少前端和小程序重复改造。
 4. 先完成数据库和账号基础，再做反馈和性能优化。
+5. 基础实现完成后，正式上线前再补安全、迁移和管理后台。
 
 ## 2. 推荐实施顺序
 
 ### 第一步：MySQL 存储层
 
-先把 JSON 文件存储替换成 MySQL，保持现有业务接口行为尽量不变。
+先增加 MySQL 存储模式，保持现有业务接口行为尽量不变。当前代码已经支持 `STORAGE_DRIVER=json` 和 `STORAGE_DRIVER=mysql` 两种模式，默认仍是 JSON。
 
 原因：
 
@@ -32,15 +54,15 @@
 
 ### 第二步：统一注册登录
 
-在 MySQL 基础上增加账号系统，Web 和小程序共用。
+已经增加账号系统，Web 和小程序共用同一套 `/api/auth/*` 接口。
 
 ### 第三步：反馈功能
 
-在登录用户基础上记录反馈人、反馈内容和处理状态。
+已经支持登录用户提交反馈和查看自己的反馈。
 
 ### 第四步：响应时间优化
 
-基于 MySQL 索引、轻量接口、Nginx 直连 `/api`、分页和缓存做优化。
+已经完成 Nginx 直连 `/api` 和轻量进度/消息接口。分页、缓存和更细粒度 SQL 查询属于后续优化。
 
 ## 3. 统一账号系统
 
@@ -158,13 +180,15 @@ Authorization: Bearer session-token
 
 密码不能明文入库。
 
-建议：
+当前实现：
 
-1. 使用 `bcrypt` 或 `argon2` 哈希密码。
+1. 使用 Node 内置 `crypto.scryptSync` 哈希密码，不保存明文。
 2. 数据库存储 `password_hash`。
 3. 登录时只比较哈希。
-4. token 使用高强度随机值。
-5. token 设置过期时间，例如 30 天。
+4. token 使用高强度随机值，数据库只保存 `token_hash`。
+5. token 默认 30 天过期，可通过 `AUTH_TOKEN_TTL_DAYS` 配置。
+
+后续生产增强可以考虑登录限流、验证码、密码找回，以及按需切换到 `argon2`。
 
 ### 3.7 Web 和小程序统一方式
 
@@ -199,11 +223,11 @@ Authorization: Bearer <token>
 }
 ```
 
-下一阶段改为：
+基础实现已经改为：
 
 1. 登录后从 token 识别用户。
-2. 创建房间、加入房间、发消息、上报进度不再信任前端传入的 `userId`。
-3. 为兼容旧网页端，可以短期保留 `userId` 字段，但后端优先使用 token 用户。
+2. 创建房间、加入房间、发消息、上报进度优先使用 token 识别用户。
+3. 为兼容旧网页端，短期保留 `userId` 字段，但后端优先使用 token 用户。
 
 ## 4. 反馈功能
 
@@ -310,10 +334,10 @@ POST /api/admin/feedback/:id/status
 ```sql
 CREATE TABLE users (
   id VARCHAR(40) PRIMARY KEY,
-  account VARCHAR(80) NOT NULL UNIQUE,
+  account VARCHAR(80) UNIQUE,
   nickname VARCHAR(40) NOT NULL,
   avatar VARCHAR(16),
-  password_hash VARCHAR(255) NOT NULL,
+  password_hash VARCHAR(255),
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
   last_active_at DATETIME
@@ -366,7 +390,7 @@ CREATE TABLE rooms (
   story_id VARCHAR(40) NOT NULL,
   story_title VARCHAR(120) NOT NULL,
   owner_id VARCHAR(40) NOT NULL,
-  threshold INT NOT NULL,
+  threshold_value INT NOT NULL,
   status VARCHAR(20) NOT NULL,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
@@ -507,20 +531,19 @@ AUTH_TOKEN_TTL_DAYS=30
 
 ### 6.2 Node 依赖
 
-建议使用：
+当前依赖：
 
 ```text
 mysql2
-bcryptjs 或 bcrypt
 ```
 
-如果要自己写 SQL：
+MySQL 模式需要先安装依赖：
 
 ```bash
-npm install mysql2 bcryptjs
+npm install
 ```
 
-后续如果代码规模变大，可以考虑 ORM 或迁移工具。
+密码哈希当前使用 Node 内置 `crypto`，不需要额外安装 `bcryptjs`。后续如果代码规模变大，可以考虑 ORM 或迁移工具。
 
 ## 7. 响应时间优化方案
 

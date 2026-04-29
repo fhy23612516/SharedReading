@@ -6,10 +6,18 @@ module.exports = {
       cwd: __dirname,
       env: {
         NODE_ENV: "production",
+        STORAGE_DRIVER: "json",
         PORT: "3210",
         HOST: "127.0.0.1",
         STORE_PATH: "/var/lib/shared-reading/store.json",
-        CORS_ORIGIN: "*"
+        CORS_ORIGIN: "*",
+        AUTH_TOKEN_TTL_DAYS: "30",
+        DB_HOST: "127.0.0.1",
+        DB_PORT: "3306",
+        DB_USER: "shared_reading",
+        DB_PASSWORD: "change-me",
+        DB_NAME: "shared_reading",
+        DB_CONNECTION_LIMIT: "10"
       },
       max_memory_restart: "300M",
       time: true

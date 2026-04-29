@@ -15,7 +15,7 @@ process.env.STORE_PATH = storePath;
 
 const { startServer, stopServer } = require("../server");
 
-function request(route, method = "GET", body = null) {
+function request(route, method = "GET", body = null, headers = {}) {
   return new Promise((resolve, reject) => {
     const raw = body ? JSON.stringify(body) : "";
     const req = http.request({
@@ -25,7 +25,8 @@ function request(route, method = "GET", body = null) {
       method,
       headers: {
         "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(raw)
+        "Content-Length": Buffer.byteLength(raw),
+        ...headers
       }
     }, (res) => {
       let data = "";
@@ -79,6 +80,33 @@ async function main() {
   await listen();
   const bootstrap = await waitForServer();
   assert.ok(bootstrap.stories.length >= 1, "bootstrap should return stories");
+
+  const registered = await request("/api/auth/register", "POST", {
+    account: `alice-${process.pid}`,
+    password: "12345678",
+    nickname: "Alice"
+  });
+  assert.ok(registered.token, "register should return a token");
+
+  const login = await request("/api/auth/login", "POST", {
+    account: `alice-${process.pid}`,
+    password: "12345678"
+  });
+  assert.ok(login.token, "login should return a token");
+
+  const authHeaders = { Authorization: `Bearer ${login.token}` };
+  const me = await request("/api/auth/me", "GET", null, authHeaders);
+  assert.equal(me.user.account, `alice-${process.pid}`, "me should return logged in user");
+
+  const feedback = await request("/api/feedback", "POST", {
+    type: "suggestion",
+    content: "please keep the reading flow fast",
+    contact: ""
+  }, authHeaders);
+  assert.ok(feedback.feedback.id, "feedback should be created");
+
+  const feedbackList = await request("/api/feedback/mine", "GET", null, authHeaders);
+  assert.equal(feedbackList.items.length, 1, "feedback list should include my feedback");
 
   const alice = (await request("/api/session", "POST", { name: "Alice" })).user;
   const bob = (await request("/api/session", "POST", { name: "Bob" })).user;

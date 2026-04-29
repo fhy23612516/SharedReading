@@ -2,7 +2,8 @@
   const STORAGE_KEYS = {
     user: "shared-reading-user-v2",
     roomId: "shared-reading-room-v2",
-    outbox: "shared-reading-outbox-v2"
+    outbox: "shared-reading-outbox-v2",
+    authToken: "shared-reading-auth-token-v1"
   };
 
   const state = {
@@ -30,7 +31,9 @@
     lastQueueToastAt: 0,
     lastRealtimeToastAt: 0,
     activityFilter: "all",
-    relativeTimeTimer: null
+    relativeTimeTimer: null,
+    authToken: "",
+    feedbackItems: []
   };
 
   const APP_CONFIG = window.__APP_CONFIG__ || {};
@@ -112,6 +115,21 @@
     return loadStoredJson(STORAGE_KEYS.user);
   }
 
+  function saveAuthToken(token) {
+    state.authToken = token || "";
+    if (token) {
+      localStorage.setItem(STORAGE_KEYS.authToken, token);
+      sessionStorage.setItem(STORAGE_KEYS.authToken, token);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.authToken);
+      sessionStorage.removeItem(STORAGE_KEYS.authToken);
+    }
+  }
+
+  function loadAuthToken() {
+    return localStorage.getItem(STORAGE_KEYS.authToken) || sessionStorage.getItem(STORAGE_KEYS.authToken) || "";
+  }
+
   function saveActiveRoomId(roomId) {
     if (roomId) {
       localStorage.setItem(STORAGE_KEYS.roomId, roomId);
@@ -156,12 +174,14 @@
     const { timeoutMs = 12000, headers = {}, signal, ...fetchOptions } = options;
     const controller = timeoutMs && typeof AbortController !== "undefined" ? new AbortController() : null;
     const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    const authHeaders = state.authToken ? { Authorization: `Bearer ${state.authToken}` } : {};
 
     try {
       const response = await fetch(url, {
         ...fetchOptions,
         headers: {
           "Content-Type": "application/json",
+          ...authHeaders,
           ...headers
         },
         signal: signal || controller?.signal
@@ -377,6 +397,16 @@
     state.quickMessages = bootstrapData.quickMessages;
     state.records = recordsData.records;
     state.user = loadSessionUser();
+    state.authToken = loadAuthToken();
+    if (state.authToken) {
+      try {
+        const data = await request(buildApiUrl("/api/auth/me"));
+        state.user = data.user;
+        saveSessionUser(data.user);
+      } catch {
+        saveAuthToken("");
+      }
+    }
   }
 
   async function refreshRecords() {
@@ -398,6 +428,15 @@
     state.user = data.user;
     saveSessionUser(data.user);
     return data.user;
+  }
+
+  async function refreshFeedback() {
+    if (!state.authToken) {
+      state.feedbackItems = [];
+      return;
+    }
+    const data = await request(buildApiUrl("/api/feedback/mine"));
+    state.feedbackItems = data.items || [];
   }
 
   function getMyProgress(room) {
@@ -558,6 +597,8 @@
           <button class="button primary" data-nav="/create">创建房间</button>
           <button class="button secondary" data-nav="/join">加入房间</button>
           ${activeRoomId ? `<button class="button secondary" id="resume-room">回到上次房间</button>` : ""}
+          <button class="button secondary" data-nav="/feedback">反馈</button>
+          ${state.authToken ? `<button class="button ghost" id="logout-user">退出账号</button>` : `<button class="button ghost" data-nav="/auth">登录/注册</button>`}
           <button class="button ghost" id="rename-user">改个昵称</button>
         </div>
       </section>
@@ -591,6 +632,189 @@
     const resumeButton = document.getElementById("resume-room");
     if (resumeButton) {
       resumeButton.addEventListener("click", () => navigate("/room", { room: activeRoomId }));
+    }
+    const logoutButton = document.getElementById("logout-user");
+    if (logoutButton) {
+      logoutButton.addEventListener("click", async () => {
+        try {
+          await request(buildApiUrl("/api/auth/logout"), { method: "POST" });
+        } catch {
+          // Local logout still proceeds when the server is unreachable.
+        }
+        saveAuthToken("");
+        localStorage.removeItem(STORAGE_KEYS.user);
+        sessionStorage.removeItem(STORAGE_KEYS.user);
+        state.user = null;
+        await ensureServerUser(`访客${Math.floor(Math.random() * 90 + 10)}`);
+        toast("已退出账号", "当前已切换为临时游客身份。");
+        render();
+      });
+    }
+  }
+
+  function renderAuth() {
+    app.innerHTML = pageChrome(
+      "账号登录",
+      `
+        <section class="panel">
+          <div class="section-kicker">统一账号</div>
+          <h2 class="section-title">Web 和小程序共用这一套账号</h2>
+          <p class="hero-copy">不依赖微信或 QQ 登录。注册后，网页端和小程序端都可以用同一个账号密码登录。</p>
+          <div class="card-grid">
+            <form id="login-form" class="record-card form-stack">
+              <div class="meta-kicker">登录</div>
+              <div class="field">
+                <label>账号</label>
+                <input class="text-input" id="login-account" autocomplete="username" />
+              </div>
+              <div class="field">
+                <label>密码</label>
+                <input class="text-input" id="login-password" type="password" autocomplete="current-password" />
+              </div>
+              <button class="button primary" type="submit">登录</button>
+            </form>
+            <form id="register-form" class="record-card form-stack">
+              <div class="meta-kicker">注册</div>
+              <div class="field">
+                <label>账号</label>
+                <input class="text-input" id="register-account" autocomplete="username" placeholder="至少 3 位" />
+              </div>
+              <div class="field">
+                <label>昵称</label>
+                <input class="text-input" id="register-nickname" maxlength="12" placeholder="12 字以内" />
+              </div>
+              <div class="field">
+                <label>密码</label>
+                <input class="text-input" id="register-password" type="password" autocomplete="new-password" placeholder="至少 8 位" />
+              </div>
+              <button class="button secondary" type="submit">注册并登录</button>
+            </form>
+          </div>
+        </section>
+      `
+    );
+
+    document.getElementById("login-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const account = document.getElementById("login-account").value.trim();
+      const password = document.getElementById("login-password").value;
+      try {
+        const data = await request(buildApiUrl("/api/auth/login"), {
+          method: "POST",
+          body: JSON.stringify({ account, password })
+        });
+        saveAuthToken(data.token);
+        state.user = data.user;
+        saveSessionUser(data.user);
+        toast("登录成功", "已切换到你的正式账号。");
+        navigate("/");
+      } catch (error) {
+        toast("登录失败", error.message === "invalid_credentials" ? "账号或密码不正确。" : "请稍后再试。");
+      }
+    });
+
+    document.getElementById("register-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const account = document.getElementById("register-account").value.trim();
+      const nickname = document.getElementById("register-nickname").value.trim();
+      const password = document.getElementById("register-password").value;
+      try {
+        const data = await request(buildApiUrl("/api/auth/register"), {
+          method: "POST",
+          body: JSON.stringify({ account, nickname, password })
+        });
+        saveAuthToken(data.token);
+        state.user = data.user;
+        saveSessionUser(data.user);
+        toast("注册成功", "账号已创建并登录。");
+        navigate("/");
+      } catch (error) {
+        const messages = {
+          invalid_account: "账号需至少 3 位，只能使用常见字母数字和符号。",
+          weak_password: "密码至少 8 位。",
+          account_exists: "这个账号已经被注册。",
+          name_required: "请填写昵称。"
+        };
+        toast("注册失败", messages[error.message] || "请检查后重试。");
+      }
+    });
+  }
+
+  function renderFeedback() {
+    const listHtml = state.feedbackItems.length
+      ? state.feedbackItems.map((item) => `
+          <div class="record-card">
+            <div class="meta-kicker">${escapeHtml(item.type)} · ${escapeHtml(item.status)}</div>
+            <h3>${escapeHtml(item.content.slice(0, 36))}${item.content.length > 36 ? "..." : ""}</h3>
+            <p class="record-meta">${formatDateTime(item.createdAt)}${item.contact ? ` · ${escapeHtml(item.contact)}` : ""}</p>
+          </div>
+        `).join("")
+      : `<div class="record-card"><p class="empty-text">还没有反馈记录。</p></div>`;
+
+    app.innerHTML = pageChrome(
+      "反馈",
+      `
+        <section class="panel">
+          <div class="section-kicker">问题和建议</div>
+          <h2 class="section-title">把你遇到的问题记下来</h2>
+          <p class="hero-copy">反馈需要登录账号，这样后续 Web 和小程序都可以追踪同一份反馈记录。</p>
+          ${state.authToken ? `
+            <form id="feedback-form" class="form-stack">
+              <div class="field">
+                <label>类型</label>
+                <select class="select-input" id="feedback-type">
+                  <option value="bug">问题</option>
+                  <option value="suggestion">建议</option>
+                  <option value="other">其他</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>内容</label>
+                <textarea class="textarea-input" id="feedback-content" maxlength="2000" placeholder="描述你遇到的问题或想要的功能"></textarea>
+              </div>
+              <div class="field">
+                <label>联系方式（可选）</label>
+                <input class="text-input" id="feedback-contact" maxlength="120" placeholder="手机号 / 邮箱 / 微信号等" />
+              </div>
+              <button class="button primary" type="submit">提交反馈</button>
+            </form>
+          ` : `
+            <div class="record-card">
+              <p class="empty-text">登录后才能提交反馈。</p>
+              <button class="button primary" data-nav="/auth">去登录/注册</button>
+            </div>
+          `}
+        </section>
+        <section class="panel" style="margin-top: 18px;">
+          <div class="section-kicker">我的反馈</div>
+          <div class="record-list">${listHtml}</div>
+        </section>
+      `
+    );
+
+    const feedbackForm = document.getElementById("feedback-form");
+    if (feedbackForm) {
+      feedbackForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const type = document.getElementById("feedback-type").value;
+        const content = document.getElementById("feedback-content").value.trim();
+        const contact = document.getElementById("feedback-contact").value.trim();
+        if (content.length < 2) {
+          toast("反馈未提交", "请至少写 2 个字。");
+          return;
+        }
+        try {
+          await request(buildApiUrl("/api/feedback"), {
+            method: "POST",
+            body: JSON.stringify({ type, content, contact })
+          });
+          toast("反馈已提交", "后续可以在这里查看记录。");
+          await refreshFeedback();
+          renderFeedback();
+        } catch (error) {
+          toast("提交失败", error.message === "unauthorized" ? "请先登录账号。" : "请稍后再试。");
+        }
+      });
     }
   }
 
@@ -1683,6 +1907,13 @@
       } else if (route.path === "/join") {
         disconnectRealtime();
         renderJoin(route.params.get("code") || "");
+      } else if (route.path === "/auth") {
+        disconnectRealtime();
+        renderAuth();
+      } else if (route.path === "/feedback") {
+        disconnectRealtime();
+        await refreshFeedback();
+        renderFeedback();
       } else if (route.path === "/waiting") {
         const room = await syncRoomFromRoute(route);
         if (!room) {
