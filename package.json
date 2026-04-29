@@ -8,6 +8,7 @@
     "dev": "node --watch server.js",
     "start:frontend": "node frontend.server.js",
     "start:public": "node frontend.server.js",
+    "mcp": "node tools/shared-reading-mcp.js",
     "test": "node tests/api-smoke.test.js"
   },
   "dependencies": {

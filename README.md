@@ -341,6 +341,8 @@ https://shareread.heiheihei.pw
 21. [MySQL迁移与启用.md](</E:/Program Files/VibeCoding/SharedReading/MySQL迁移与启用.md>)
 22. [schema/mysql.sql](</E:/Program Files/VibeCoding/SharedReading/schema/mysql.sql>)
 23. [版本记录.md](</E:/Program Files/VibeCoding/SharedReading/版本记录.md>)
+24. [MCP使用说明.md](</E:/Program Files/VibeCoding/SharedReading/MCP使用说明.md>)
+25. [tools/shared-reading-mcp.js](</E:/Program Files/VibeCoding/SharedReading/tools/shared-reading-mcp.js>)
 
 ## 当前产品规则
 
