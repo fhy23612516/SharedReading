@@ -125,6 +125,40 @@ async function main() {
   }, authHeaders);
   assert.equal(importedRoom.room.story.id, imported.book.id, "room can use imported book");
 
+  const search = await request(`/api/search?q=${encodeURIComponent("Imported")}`, "GET", null, authHeaders);
+  assert.ok(search.items.some((story) => story.id === imported.book.id), "search should find imported book");
+
+  await request("/api/bookshelf", "POST", { storyId: imported.book.id }, authHeaders);
+  const bookshelf = await request("/api/bookshelf", "GET", null, authHeaders);
+  assert.ok(bookshelf.items.some((item) => item.story.id === imported.book.id), "bookshelf should include imported book");
+  const searchAfterBookshelf = await request(`/api/search?q=${encodeURIComponent("Imported")}`, "GET", null, authHeaders);
+  assert.ok(searchAfterBookshelf.items.some((story) => story.id === imported.book.id && story.inBookshelf), "search should mark bookshelf state");
+  await request("/api/bookshelf/remove", "POST", { storyId: imported.book.id }, authHeaders);
+  const bookshelfAfterRemove = await request("/api/bookshelf", "GET", null, authHeaders);
+  assert.ok(!bookshelfAfterRemove.items.some((item) => item.story.id === imported.book.id), "bookshelf remove should work");
+
+  const chapterComment = await request(`/api/stories/${imported.book.id}/comments`, "POST", {
+    scope: "chapter",
+    content: "chapter level comment"
+  }, authHeaders);
+  assert.ok(chapterComment.comment.id, "chapter comment should be created");
+
+  const paragraphComment = await request(`/api/stories/${imported.book.id}/comments`, "POST", {
+    scope: "paragraph",
+    paragraphIndex: 0,
+    content: "paragraph level comment"
+  }, authHeaders);
+  assert.equal(paragraphComment.summary.paragraphs["0"], 1, "paragraph comment summary should update");
+
+  const comments = await request(`/api/stories/${imported.book.id}/comments?scope=paragraph&paragraphIndex=0`);
+  assert.equal(comments.items.length, 1, "paragraph comments should be queryable");
+
+  await request(`/api/rooms/${importedRoom.room.id}/progress`, "POST", {
+    progress: 18.5
+  }, authHeaders);
+  const history = await request("/api/reading/history", "GET", null, authHeaders);
+  assert.ok(history.items.some((item) => item.story.id === imported.book.id), "history should include imported book after progress");
+
   const alice = (await request("/api/session", "POST", { name: "Alice" })).user;
   const bob = (await request("/api/session", "POST", { name: "Bob" })).user;
 

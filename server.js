@@ -29,7 +29,10 @@ function emptyState() {
     records: [],
     authSessions: {},
     feedback: [],
-    books: []
+    books: [],
+    comments: [],
+    bookshelf: [],
+    readingHistory: []
   };
 }
 
@@ -43,7 +46,10 @@ function readState() {
       records: parsed.records || [],
       authSessions: parsed.authSessions || {},
       feedback: parsed.feedback || [],
-      books: Array.isArray(parsed.books) ? parsed.books : []
+      books: Array.isArray(parsed.books) ? parsed.books : [],
+      comments: Array.isArray(parsed.comments) ? parsed.comments : [],
+      bookshelf: Array.isArray(parsed.bookshelf) ? parsed.bookshelf : [],
+      readingHistory: Array.isArray(parsed.readingHistory) ? parsed.readingHistory : []
     };
   } catch (error) {
     return emptyState();
@@ -144,6 +150,38 @@ async function ensureMysqlSchema() {
       created_at DATETIME NOT NULL,
       updated_at DATETIME NOT NULL,
       INDEX idx_books_owner_created (owner_id, created_at)
+    )`,
+    `CREATE TABLE IF NOT EXISTS story_comments (
+      id VARCHAR(40) PRIMARY KEY,
+      story_id VARCHAR(40) NOT NULL,
+      scope VARCHAR(20) NOT NULL,
+      paragraph_index INT NULL,
+      user_id VARCHAR(40) NOT NULL,
+      user_name VARCHAR(40) NOT NULL,
+      content VARCHAR(500) NOT NULL,
+      created_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL,
+      INDEX idx_story_comments_story_scope (story_id, scope, paragraph_index, created_at),
+      INDEX idx_story_comments_user_created (user_id, created_at)
+    )`,
+    `CREATE TABLE IF NOT EXISTS bookshelf_items (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      user_id VARCHAR(40) NOT NULL,
+      story_id VARCHAR(40) NOT NULL,
+      added_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL,
+      UNIQUE KEY uniq_bookshelf_user_story (user_id, story_id),
+      INDEX idx_bookshelf_user_updated (user_id, updated_at)
+    )`,
+    `CREATE TABLE IF NOT EXISTS reading_history (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      user_id VARCHAR(40) NOT NULL,
+      story_id VARCHAR(40) NOT NULL,
+      room_id VARCHAR(40),
+      progress DECIMAL(5,1) NOT NULL DEFAULT 0,
+      last_read_at DATETIME NOT NULL,
+      UNIQUE KEY uniq_history_user_story (user_id, story_id),
+      INDEX idx_history_user_last_read (user_id, last_read_at)
     )`,
     `CREATE TABLE IF NOT EXISTS rooms (
       id VARCHAR(40) PRIMARY KEY,
@@ -252,7 +290,10 @@ async function readMysqlState() {
     [messageRows],
     [eventRows],
     [recordRows],
-    [feedbackRows]
+    [feedbackRows],
+    [commentRows],
+    [bookshelfRows],
+    [historyRows]
   ] = await Promise.all([
     pool.query("SELECT * FROM users"),
     pool.query("SELECT * FROM auth_sessions"),
@@ -263,7 +304,10 @@ async function readMysqlState() {
     pool.query("SELECT * FROM chat_messages ORDER BY created_at ASC"),
     pool.query("SELECT * FROM room_events ORDER BY created_at ASC"),
     pool.query("SELECT * FROM reading_records ORDER BY created_at DESC LIMIT 50"),
-    pool.query("SELECT * FROM feedback ORDER BY created_at DESC")
+    pool.query("SELECT * FROM feedback ORDER BY created_at DESC"),
+    pool.query("SELECT * FROM story_comments ORDER BY created_at ASC"),
+    pool.query("SELECT * FROM bookshelf_items ORDER BY updated_at DESC"),
+    pool.query("SELECT * FROM reading_history ORDER BY last_read_at DESC")
   ]);
 
   const next = emptyState();
@@ -420,6 +464,33 @@ async function readMysqlState() {
     updatedAt: toIso(row.updated_at) || now()
   }));
 
+  next.comments = commentRows.map((row) => ({
+    id: row.id,
+    storyId: row.story_id,
+    scope: row.scope,
+    paragraphIndex: row.paragraph_index == null ? null : Number(row.paragraph_index),
+    userId: row.user_id,
+    userName: row.user_name,
+    content: row.content,
+    createdAt: toIso(row.created_at) || now(),
+    updatedAt: toIso(row.updated_at) || now()
+  }));
+
+  next.bookshelf = bookshelfRows.map((row) => ({
+    userId: row.user_id,
+    storyId: row.story_id,
+    addedAt: toIso(row.added_at) || now(),
+    updatedAt: toIso(row.updated_at) || now()
+  }));
+
+  next.readingHistory = historyRows.map((row) => ({
+    userId: row.user_id,
+    storyId: row.story_id,
+    roomId: row.room_id || null,
+    progress: Number(row.progress || 0),
+    lastReadAt: toIso(row.last_read_at) || now()
+  }));
+
   return next;
 }
 
@@ -434,6 +505,9 @@ async function saveMysqlState() {
     await connection.query("DELETE FROM room_members");
     await connection.query("DELETE FROM reading_records");
     await connection.query("DELETE FROM feedback");
+    await connection.query("DELETE FROM story_comments");
+    await connection.query("DELETE FROM bookshelf_items");
+    await connection.query("DELETE FROM reading_history");
     await connection.query("DELETE FROM auth_sessions");
     await connection.query("DELETE FROM books");
     await connection.query("DELETE FROM rooms");
@@ -492,6 +566,54 @@ async function saveMysqlState() {
           JSON.stringify(book.tags || []),
           toMysqlDate(book.createdAt) || toMysqlDate(now()),
           toMysqlDate(book.updatedAt) || toMysqlDate(now())
+        ]
+      );
+    }
+
+    for (const item of state.comments || []) {
+      await connection.query(
+        `INSERT INTO story_comments
+          (id, story_id, scope, paragraph_index, user_id, user_name, content, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          item.id,
+          item.storyId,
+          item.scope,
+          item.paragraphIndex == null ? null : Number(item.paragraphIndex),
+          item.userId,
+          item.userName,
+          item.content,
+          toMysqlDate(item.createdAt) || toMysqlDate(now()),
+          toMysqlDate(item.updatedAt) || toMysqlDate(now())
+        ]
+      );
+    }
+
+    for (const item of state.bookshelf || []) {
+      await connection.query(
+        `INSERT INTO bookshelf_items
+          (user_id, story_id, added_at, updated_at)
+         VALUES (?, ?, ?, ?)`,
+        [
+          item.userId,
+          item.storyId,
+          toMysqlDate(item.addedAt) || toMysqlDate(now()),
+          toMysqlDate(item.updatedAt) || toMysqlDate(now())
+        ]
+      );
+    }
+
+    for (const item of state.readingHistory || []) {
+      await connection.query(
+        `INSERT INTO reading_history
+          (user_id, story_id, room_id, progress, last_read_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+          item.userId,
+          item.storyId,
+          item.roomId || null,
+          Number(item.progress || 0),
+          toMysqlDate(item.lastReadAt) || toMysqlDate(now())
         ]
       );
     }
@@ -905,6 +1027,125 @@ function getStoryById(storyId, user = null) {
   return getImportedBooks().find((book) => book.id === storyId && (!user || !book.ownerId || book.ownerId === user.id));
 }
 
+function getStoryForPublicUse(storyId) {
+  return builtInStoryMap.get(storyId) || getImportedBooks().find((book) => book.id === storyId) || null;
+}
+
+function getStoryCommentSummary(storyId) {
+  const summary = {
+    chapter: 0,
+    paragraphs: {}
+  };
+  (state.comments || []).forEach((item) => {
+    if (item.storyId !== storyId) return;
+    if (item.scope === "chapter") {
+      summary.chapter += 1;
+      return;
+    }
+    if (item.scope === "paragraph" && item.paragraphIndex != null) {
+      const key = String(item.paragraphIndex);
+      summary.paragraphs[key] = (summary.paragraphs[key] || 0) + 1;
+    }
+  });
+  return summary;
+}
+
+function searchStories(query, user = null) {
+  const keyword = String(query || "").trim().toLowerCase();
+  if (!keyword) return [];
+  const userId = user?.id || null;
+  return getVisibleStories(user)
+    .filter((story) => {
+      const haystack = [
+        story.title,
+        story.author,
+        story.summary,
+        story.cover,
+        ...(story.tags || []),
+        story.text || ""
+      ].join(" ").toLowerCase();
+      return haystack.includes(keyword);
+    })
+    .slice(0, 30)
+    .map((story) => {
+      const history = userId ? getReadingHistoryItems(userId).find((item) => item.storyId === story.id) || null : null;
+      const inBookshelf = userId ? getBookshelfItems(userId).some((item) => item.storyId === story.id) : false;
+      return {
+        ...sanitizeStory(story),
+        history,
+        inBookshelf,
+        commentSummary: getStoryCommentSummary(story.id)
+      };
+    });
+}
+
+function getBookshelfItems(userId) {
+  return (state.bookshelf || [])
+    .filter((item) => item.userId === userId)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+}
+
+function getReadingHistoryItems(userId) {
+  return (state.readingHistory || [])
+    .filter((item) => item.userId === userId)
+    .sort((a, b) => new Date(b.lastReadAt).getTime() - new Date(a.lastReadAt).getTime());
+}
+
+function decorateStoryItem(storyId, userId) {
+  const story = getStoryForPublicUse(storyId);
+  if (!story) return null;
+  const history = getReadingHistoryItems(userId).find((item) => item.storyId === storyId) || null;
+  return {
+    story: sanitizeStory(story),
+    history,
+    inBookshelf: getBookshelfItems(userId).some((item) => item.storyId === storyId),
+    commentSummary: getStoryCommentSummary(storyId)
+  };
+}
+
+function upsertBookshelf(userId, storyId) {
+  const at = now();
+  state.bookshelf = state.bookshelf || [];
+  const existing = state.bookshelf.find((item) => item.userId === userId && item.storyId === storyId);
+  if (existing) {
+    existing.updatedAt = at;
+    return existing;
+  }
+  const item = { userId, storyId, addedAt: at, updatedAt: at };
+  state.bookshelf.unshift(item);
+  return item;
+}
+
+function removeBookshelf(userId, storyId) {
+  const before = (state.bookshelf || []).length;
+  state.bookshelf = (state.bookshelf || []).filter((item) => !(item.userId === userId && item.storyId === storyId));
+  return state.bookshelf.length !== before;
+}
+
+function upsertReadingHistory(userId, storyId, roomId, progress) {
+  if (!userId || !storyId) return null;
+  const at = now();
+  state.readingHistory = state.readingHistory || [];
+  const existing = state.readingHistory.find((item) => item.userId === userId && item.storyId === storyId);
+  const nextProgress = Math.max(0, Math.min(100, Number(progress || 0)));
+  if (existing) {
+    existing.roomId = roomId || existing.roomId || null;
+    existing.progress = Math.max(Number(existing.progress || 0), nextProgress);
+    existing.lastReadAt = at;
+    return existing;
+  }
+  const item = {
+    userId,
+    storyId,
+    roomId: roomId || null,
+    progress: nextProgress,
+    lastReadAt: at
+  };
+  state.readingHistory.unshift(item);
+  state.readingHistory = state.readingHistory.slice(0, 500);
+  return item;
+}
+
 function createRoomCode() {
   let code = "";
   do {
@@ -1047,10 +1288,11 @@ function maybeCompleteRoom(room) {
 }
 
 function normalizeRoom(room) {
-  const story = getStoryById(room.storyId);
+  const story = getStoryForPublicUse(room.storyId);
   return {
     ...room,
     story: sanitizeStory(story),
+    commentSummary: getStoryCommentSummary(room.storyId),
     activeMembers: getActiveMembers(room),
     waitState: computeWaitState(room)
   };
@@ -1146,10 +1388,24 @@ async function handleApi(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/bootstrap") {
     const user = getAuthenticatedUser(req);
     sendJson(res, 200, {
-      stories: getVisibleStories(user).map(sanitizeStory),
+      stories: getVisibleStories(user).map((story) => ({
+        ...sanitizeStory(story),
+        commentSummary: getStoryCommentSummary(story.id)
+      })),
       waitOptions: [5, 8, 12, 15],
       quickMessages: ["我等你", "慢慢读", "这段好看", "哈哈哈", "读到这里告诉我", "我刚看到一个重点"]
     });
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/search") {
+    const user = getAuthenticatedUser(req);
+    const query = url.searchParams.get("q") || "";
+    if (!query.trim()) {
+      sendJson(res, 400, { error: "query_required" });
+      return true;
+    }
+    sendJson(res, 200, { items: searchStories(query, user) });
     return true;
   }
 
@@ -1161,6 +1417,100 @@ async function handleApi(req, res, url) {
     }
     const books = getImportedBooks().filter((book) => book.ownerId === user.id).map(sanitizeStory);
     sendJson(res, 200, { books });
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/bookshelf") {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return true;
+    }
+    const items = getBookshelfItems(user.id)
+      .map((item) => {
+        const decorated = decorateStoryItem(item.storyId, user.id);
+        return decorated ? { ...item, ...decorated } : null;
+      })
+      .filter(Boolean);
+    sendJson(res, 200, { items });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/bookshelf") {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return true;
+    }
+    const body = await parseBody(req).catch((error) => ({ __error: error.message }));
+    if (body.__error) {
+      sendJson(res, 400, { error: body.__error });
+      return true;
+    }
+    const story = getStoryById(body.storyId, user);
+    if (!story) {
+      sendJson(res, 404, { error: "story_not_found" });
+      return true;
+    }
+    const item = upsertBookshelf(user.id, story.id);
+    persistState();
+    sendJson(res, 200, { item: { ...item, story: sanitizeStory(story) } });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/bookshelf/remove") {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return true;
+    }
+    const body = await parseBody(req).catch((error) => ({ __error: error.message }));
+    if (body.__error) {
+      sendJson(res, 400, { error: body.__error });
+      return true;
+    }
+    removeBookshelf(user.id, String(body.storyId || ""));
+    persistState();
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/reading/history") {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return true;
+    }
+    const items = getReadingHistoryItems(user.id)
+      .map((item) => {
+        const decorated = decorateStoryItem(item.storyId, user.id);
+        return decorated ? { ...item, ...decorated } : null;
+      })
+      .filter(Boolean)
+      .slice(0, 80);
+    sendJson(res, 200, { items });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/reading/history") {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return true;
+    }
+    const body = await parseBody(req).catch((error) => ({ __error: error.message }));
+    if (body.__error) {
+      sendJson(res, 400, { error: body.__error });
+      return true;
+    }
+    const story = getStoryForPublicUse(body.storyId);
+    if (!story) {
+      sendJson(res, 404, { error: "story_not_found" });
+      return true;
+    }
+    const item = upsertReadingHistory(user.id, story.id, body.roomId, body.progress);
+    persistState();
+    sendJson(res, 200, { item: { ...item, story: sanitizeStory(story) } });
     return true;
   }
 
@@ -1215,6 +1565,82 @@ async function handleApi(req, res, url) {
     state.books = [book, ...getImportedBooks()].slice(0, 200);
     persistState();
     sendJson(res, 201, { book: sanitizeStory(book) });
+    return true;
+  }
+
+  const commentMatch = url.pathname.match(/^\/api\/stories\/([^/]+)\/comments$/);
+  if (commentMatch && req.method === "GET") {
+    const storyId = decodeURIComponent(commentMatch[1]);
+    if (!getStoryForPublicUse(storyId)) {
+      sendJson(res, 404, { error: "story_not_found" });
+      return true;
+    }
+    const scope = String(url.searchParams.get("scope") || "").trim();
+    const paragraphIndexRaw = url.searchParams.get("paragraphIndex");
+    const paragraphIndex = paragraphIndexRaw == null ? null : Number(paragraphIndexRaw);
+    const items = (state.comments || [])
+      .filter((item) => item.storyId === storyId)
+      .filter((item) => !scope || item.scope === scope)
+      .filter((item) => paragraphIndexRaw == null || Number(item.paragraphIndex) === paragraphIndex)
+      .slice(-100);
+    sendJson(res, 200, { items, summary: getStoryCommentSummary(storyId) });
+    return true;
+  }
+
+  if (commentMatch && req.method === "POST") {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return true;
+    }
+    const storyId = decodeURIComponent(commentMatch[1]);
+    const story = getStoryForPublicUse(storyId);
+    if (!story) {
+      sendJson(res, 404, { error: "story_not_found" });
+      return true;
+    }
+    const body = await parseBody(req).catch((error) => ({ __error: error.message }));
+    if (body.__error) {
+      sendJson(res, 400, { error: body.__error });
+      return true;
+    }
+    const scope = String(body.scope || "chapter").trim();
+    const allowedScopes = new Set(["chapter", "paragraph"]);
+    if (!allowedScopes.has(scope)) {
+      sendJson(res, 400, { error: "invalid_comment_scope" });
+      return true;
+    }
+    const content = String(body.content || "").trim();
+    if (content.length < 1) {
+      sendJson(res, 400, { error: "comment_content_required" });
+      return true;
+    }
+    if (content.length > 300) {
+      sendJson(res, 400, { error: "comment_too_long" });
+      return true;
+    }
+    const paragraphIndex = scope === "paragraph" ? Number(body.paragraphIndex) : null;
+    if (scope === "paragraph" && (!Number.isInteger(paragraphIndex) || paragraphIndex < 0 || paragraphIndex >= story.body.length)) {
+      sendJson(res, 400, { error: "invalid_paragraph_index" });
+      return true;
+    }
+    const createdAt = now();
+    const comment = {
+      id: uid("comment"),
+      storyId,
+      scope,
+      paragraphIndex,
+      userId: user.id,
+      userName: user.name || user.nickname || "读者",
+      content,
+      createdAt,
+      updatedAt: createdAt
+    };
+    state.comments = state.comments || [];
+    state.comments.push(comment);
+    state.comments = state.comments.slice(-2000);
+    persistState();
+    sendJson(res, 201, { comment, summary: getStoryCommentSummary(storyId) });
     return true;
   }
 
@@ -1526,6 +1952,12 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "GET" && action === "detail") {
+    const authUser = getAuthenticatedUser(req);
+    if (authUser && getMember(room, authUser.id)) {
+      const entry = room.progress[authUser.id];
+      upsertReadingHistory(authUser.id, room.storyId, room.id, entry?.maxProgress || 0);
+      persistState();
+    }
     sendJson(res, 200, { room: normalizeRoom(room) });
     return true;
   }
@@ -1589,6 +2021,7 @@ async function handleApi(req, res, url) {
     entry.maxProgress = Math.max(entry.maxProgress, next);
     entry.done = entry.maxProgress >= 100;
     entry.lastUpdatedAt = now();
+    upsertReadingHistory(user.id, room.storyId, room.id, entry.maxProgress);
     if (entry.maxProgress >= previousMax + 2 || (entry.maxProgress === 100 && previousMax < 100)) {
       appendEvent(room, "progress", user.id, `${entry.maxProgress.toFixed(1)}%`);
     }

@@ -6,7 +6,8 @@
     authToken: "shared-reading-auth-token-v1",
     readingPrefs: "shared-reading-reading-prefs-v1",
     annotations: "shared-reading-annotations-v1",
-    bookmarks: "shared-reading-bookmarks-v1"
+    bookmarks: "shared-reading-bookmarks-v1",
+    lastSearch: "shared-reading-last-search-v1"
   };
 
   const DEFAULT_READING_PREFS = {
@@ -45,7 +46,13 @@
     authToken: "",
     feedbackItems: [],
     readingPrefs: { ...DEFAULT_READING_PREFS },
-    selectedText: ""
+    selectedText: "",
+    bookshelfItems: [],
+    readingHistoryItems: [],
+    commentItems: [],
+    activeCommentScope: "chapter",
+    activeParagraphIndex: null,
+    activeParagraphText: ""
   };
 
   const APP_CONFIG = window.__APP_CONFIG__ || {};
@@ -529,9 +536,17 @@
     return html;
   }
 
-  function renderReaderBody(story) {
+  function renderReaderBody(story, commentSummary = {}) {
     const annotations = getStoryAnnotations(story.id);
-    return story.body.map((paragraph) => `<p>${renderParagraphWithAnnotations(paragraph, annotations)}</p>`).join("");
+    const paragraphCounts = commentSummary.paragraphs || {};
+    return story.body.map((paragraph, index) => `
+      <div class="paragraph-row" data-paragraph-row="${index}">
+        <p>${renderParagraphWithAnnotations(paragraph, annotations)}</p>
+        <button class="paragraph-comment-button" type="button" data-paragraph-comment="${index}">
+          段评 ${Number(paragraphCounts[index] || 0)}
+        </button>
+      </div>
+    `).join("");
   }
 
   async function ensureServerUser(name) {
@@ -554,6 +569,56 @@
     }
     const data = await request(buildApiUrl("/api/feedback/mine"));
     state.feedbackItems = data.items || [];
+  }
+
+  async function refreshBookshelf() {
+    if (!state.authToken) {
+      state.bookshelfItems = [];
+      return;
+    }
+    const data = await request(buildApiUrl("/api/bookshelf"));
+    state.bookshelfItems = data.items || [];
+  }
+
+  async function refreshReadingHistory() {
+    if (!state.authToken) {
+      state.readingHistoryItems = [];
+      return;
+    }
+    const data = await request(buildApiUrl("/api/reading/history"));
+    state.readingHistoryItems = data.items || [];
+  }
+
+  async function refreshStoryComments(storyId, scope = "chapter", paragraphIndex = null) {
+    const params = new URLSearchParams({ scope });
+    if (paragraphIndex != null) params.set("paragraphIndex", String(paragraphIndex));
+    const data = await request(buildApiUrl(`/api/stories/${encodeURIComponent(storyId)}/comments?${params.toString()}`));
+    state.commentItems = data.items || [];
+    return data;
+  }
+
+  async function addToBookshelf(storyId) {
+    if (!state.authToken) {
+      toast("需要登录", "登录后才能加入书架。");
+      navigate("/auth");
+      return;
+    }
+    await request(buildApiUrl("/api/bookshelf"), {
+      method: "POST",
+      body: JSON.stringify({ storyId })
+    });
+    toast("已加入书架", "可以在书架里继续阅读。");
+  }
+
+  async function removeFromBookshelf(storyId) {
+    if (!state.authToken) return;
+    await request(buildApiUrl("/api/bookshelf/remove"), {
+      method: "POST",
+      body: JSON.stringify({ storyId })
+    });
+    toast("已移出书架", "这本内容已从书架移除。");
+    await refreshBookshelf();
+    renderBookshelf();
   }
 
   function getMyProgress(room) {
@@ -683,6 +748,45 @@
     `).join("");
   }
 
+  function renderCommentItems(items) {
+    if (!items.length) {
+      return `<div class="empty-text">还没有评论，可以先发一条。</div>`;
+    }
+    return items.slice(-12).reverse().map((item) => `
+      <div class="comment-item">
+        <div class="message-meta">${escapeHtml(item.userName)} · ${formatTime(item.createdAt)}</div>
+        <div class="message-body">${escapeHtml(item.content)}</div>
+      </div>
+    `).join("");
+  }
+
+  function renderStoryLibraryCard(item, options = {}) {
+    const story = item.story || item;
+    const history = item.history || null;
+    const actions = options.actions || "";
+    const inBookshelf = Boolean(item.inBookshelf || options.inBookshelf);
+    const bookshelfAction = inBookshelf
+      ? `<button class="button secondary" disabled>已在书架</button>`
+      : `<button class="button secondary" data-library-add="${escapeHtml(story.id)}">加入书架</button>`;
+    const removeAction = options.showRemove
+      ? `<button class="button ghost" data-library-remove="${escapeHtml(story.id)}">移出书架</button>`
+      : "";
+    return `
+      <div class="record-card library-card">
+        <div class="tag">${escapeHtml(story.cover || "内容")}</div>
+        <h3>${escapeHtml(story.title)}</h3>
+        <div class="story-meta">${escapeHtml(story.author || "未知作者")} · ${Number(story.wordCount || 0)} 字${story.source === "imported" ? " · 我的导入" : ""}</div>
+        <p>${escapeHtml(story.summary || "")}</p>
+        ${history ? `<p class="record-meta">上次读到 ${Number(history.progress || 0).toFixed(1)}% · ${formatRelativeTime(history.lastReadAt)}</p>` : ""}
+        <div class="button-row">
+          ${actions}
+          ${bookshelfAction}
+          ${removeAction}
+        </div>
+      </div>
+    `;
+  }
+
   function pageChrome(title, body, rightActionHtml = "") {
     return `
       <div class="topbar">
@@ -739,6 +843,9 @@
         <div class="button-row">
           <button class="button primary" data-nav="/create">创建房间</button>
           <button class="button secondary" data-nav="/join">加入房间</button>
+          <button class="button secondary" data-nav="/search">搜索</button>
+          <button class="button secondary" data-nav="/bookshelf">书架</button>
+          <button class="button secondary" data-nav="/history">浏览记录</button>
           <button class="button secondary" data-nav="/import">导入书籍</button>
           ${activeRoomId ? `<button class="button secondary" id="resume-room">回到上次房间</button>` : ""}
           <button class="button secondary" data-nav="/feedback">反馈</button>
@@ -962,6 +1069,108 @@
         }
       });
     }
+  }
+
+  async function renderSearch() {
+    const initialQuery = (localStorage.getItem(STORAGE_KEYS.lastSearch) || "").trim();
+    const initialItems = initialQuery
+      ? (await request(buildApiUrl(`/api/search?q=${encodeURIComponent(initialQuery)}`))).items || []
+      : [];
+    app.innerHTML = pageChrome(
+      "搜索",
+      `
+        <section class="panel">
+          <div class="section-kicker">找书和内容</div>
+          <h2 class="section-title">搜索标题、作者、简介或正文</h2>
+          <form id="search-form" class="form-stack">
+            <div class="field">
+              <label>关键词</label>
+              <input class="text-input" id="search-input" value="${escapeHtml(initialQuery)}" placeholder="例如：悬疑、火锅、作者名" />
+            </div>
+            <button class="button primary" type="submit">搜索</button>
+          </form>
+          <div class="record-list" id="search-results" style="margin-top: 18px;">
+            ${initialItems.length ? initialItems.map((story) => renderStoryLibraryCard(story)).join("") : `<div class="record-card"><p class="empty-text">输入关键词后搜索。</p></div>`}
+          </div>
+        </section>
+      `
+    );
+
+    const results = document.getElementById("search-results");
+    document.getElementById("search-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const query = document.getElementById("search-input").value.trim();
+      localStorage.setItem(STORAGE_KEYS.lastSearch, query);
+      if (!query) {
+        results.innerHTML = `<div class="record-card"><p class="empty-text">请输入关键词。</p></div>`;
+        return;
+      }
+      const data = await request(buildApiUrl(`/api/search?q=${encodeURIComponent(query)}`));
+      const items = data.items || [];
+      results.innerHTML = items.length
+        ? items.map((story) => renderStoryLibraryCard(story)).join("")
+        : `<div class="record-card"><p class="empty-text">没有找到匹配内容。</p></div>`;
+      bindLibraryActions(results);
+    });
+    bindLibraryActions(results);
+  }
+
+  function renderBookshelf() {
+    const listHtml = state.bookshelfItems.length
+      ? state.bookshelfItems.map((item) => renderStoryLibraryCard(item, {
+          actions: item.history?.roomId ? `<button class="button primary" data-nav="/room" data-room="${escapeHtml(item.history.roomId)}">继续读</button>` : "",
+          inBookshelf: true,
+          showRemove: true
+        })).join("")
+      : `<div class="record-card"><p class="empty-text">书架还是空的。可以在搜索、首页或阅读页加入书架。</p></div>`;
+
+    app.innerHTML = pageChrome(
+      "我的书架",
+      `
+        <section class="panel">
+          <div class="section-kicker">书架</div>
+          <h2 class="section-title">收藏后更方便继续读</h2>
+          <div class="record-list">${listHtml}</div>
+        </section>
+      `
+    );
+    bindLibraryActions(app);
+  }
+
+  function renderHistory() {
+    const listHtml = state.readingHistoryItems.length
+      ? state.readingHistoryItems.map((item) => renderStoryLibraryCard(item, {
+          actions: item.roomId ? `<button class="button primary" data-nav="/room" data-room="${escapeHtml(item.roomId)}">继续读</button>` : ""
+        })).join("")
+      : `<div class="record-card"><p class="empty-text">还没有浏览记录。进入阅读页后会自动记录。</p></div>`;
+
+    app.innerHTML = pageChrome(
+      "浏览记录",
+      `
+        <section class="panel">
+          <div class="section-kicker">历史</div>
+          <h2 class="section-title">最近看过的内容</h2>
+          <div class="record-list">${listHtml}</div>
+        </section>
+      `
+    );
+    bindLibraryActions(app);
+  }
+
+  function bindLibraryActions(root) {
+    root.querySelectorAll("[data-library-add]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await addToBookshelf(button.getAttribute("data-library-add"));
+      });
+    });
+    root.querySelectorAll("[data-library-remove]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await removeFromBookshelf(button.getAttribute("data-library-remove"));
+      });
+    });
+    root.querySelectorAll("[data-room]").forEach((button) => {
+      button.addEventListener("click", () => navigate("/room", { room: button.getAttribute("data-room") }));
+    });
   }
 
   function renderImport() {
@@ -1437,6 +1646,24 @@
           </section>
 
           <section class="sidebar-card">
+            <div class="meta-kicker">评论</div>
+            <h3 id="comment-panel-title">本章评论 ${Number(room.commentSummary?.chapter || 0)}</h3>
+            <p class="record-meta" id="comment-context">章节评论适合聊整篇内容；点击正文旁“段评”可以评论某一段。</p>
+            <div class="comment-list" id="comment-list">${renderCommentItems(state.commentItems)}</div>
+            ${state.authToken ? `
+              <form id="comment-form" class="form-stack" style="margin-top: 12px;">
+                <textarea class="textarea-input" id="comment-input" maxlength="300" placeholder="写一条评论，最多 300 字"></textarea>
+                <button class="button primary" type="submit">发布评论</button>
+              </form>
+            ` : `
+              <div class="record-card">
+                <p class="empty-text">登录后可以发段评和章评。</p>
+                <button class="button primary" data-nav="/auth">去登录</button>
+              </div>
+            `}
+          </section>
+
+          <section class="sidebar-card">
             <div class="meta-kicker">动态汇总</div>
             <div class="quick-actions activity-filters" id="activity-filters">
               ${renderActivityFilters()}
@@ -1492,7 +1719,7 @@
                 <p class="hero-copy" style="margin:0;">${escapeHtml(story.summary)}</p>
               </div>
               <div class="reader-body">
-                ${renderReaderBody(story)}
+                ${renderReaderBody(story, room.commentSummary)}
               </div>
             </div>
           </section>
@@ -1504,7 +1731,8 @@
   function renderRoom(room) {
     const roomActions = [
       `<button class="button secondary" id="copy-code-inline">复制房间码</button>`,
-      `<button class="button secondary" id="copy-invite-inline">复制邀请链接</button>`
+      `<button class="button secondary" id="copy-invite-inline">复制邀请链接</button>`,
+      `<button class="button secondary" id="add-story-bookshelf">加入书架</button>`
     ];
     if (room.ownerId === state.user.id) {
       roomActions.push(`<button class="button ghost" id="close-room-inline">关闭房间</button>`);
@@ -1518,6 +1746,7 @@
 
     bindReader(room);
     bindReadingTools(room);
+    bindCommentTools(room);
     bindChat(room);
     startRelativeTimeTicker();
 
@@ -1562,6 +1791,10 @@
       } catch {
         toast("复制失败", "当前环境不支持自动复制。");
       }
+    });
+
+    document.getElementById("add-story-bookshelf").addEventListener("click", async () => {
+      await addToBookshelf(room.story.id);
     });
 
     const closeRoomButton = document.getElementById("close-room-inline");
@@ -1814,7 +2047,7 @@
         : [{ id: `ann-${Date.now()}`, text, color: "yellow", createdAt: new Date().toISOString() }, ...annotations];
       saveStoryAnnotations(story.id, next);
       const body = document.querySelector(".reader-body");
-      if (body) body.innerHTML = renderReaderBody(story);
+      if (body) body.innerHTML = renderReaderBody(story, room.commentSummary);
       if (annotationList) annotationList.innerHTML = renderAnnotationList(story.id);
       window.getSelection()?.removeAllRanges();
       state.selectedText = "";
@@ -1834,7 +2067,7 @@
         progress,
         createdAt: new Date().toISOString()
       }, ...bookmarks];
-      saveStoryBookmarks(story.id, next);
+    saveStoryBookmarks(story.id, next);
       if (bookmarkList) bookmarkList.innerHTML = renderBookmarkList(story.id);
       toast("已添加书签", `${progress.toFixed(1)}%`);
     });
@@ -1845,6 +2078,90 @@
       const progress = Number(button.getAttribute("data-bookmark-progress"));
       const maxScroll = Math.max(0, reader.scrollHeight - reader.clientHeight);
       reader.scrollTo({ top: (Math.max(0, Math.min(100, progress)) / 100) * maxScroll, behavior: "smooth" });
+    });
+  }
+
+  async function bindCommentTools(room) {
+    const story = room.story;
+    state.activeCommentScope = "chapter";
+    state.activeParagraphIndex = null;
+    state.activeParagraphText = "";
+    await refreshStoryComments(story.id, "chapter").catch(() => {});
+    renderCommentPanel(room);
+
+    const reader = document.getElementById("reader-scroll");
+    reader?.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-paragraph-comment]");
+      if (!button) return;
+      const index = Number(button.getAttribute("data-paragraph-comment"));
+      state.activeCommentScope = "paragraph";
+      state.activeParagraphIndex = index;
+      state.activeParagraphText = story.body[index] || "";
+      await refreshStoryComments(story.id, "paragraph", index).catch(() => {});
+      renderCommentPanel(room);
+      document.getElementById("comment-input")?.focus();
+    });
+
+    const title = document.getElementById("comment-panel-title");
+    if (title) {
+      title.addEventListener("click", async () => {
+        state.activeCommentScope = "chapter";
+        state.activeParagraphIndex = null;
+        state.activeParagraphText = "";
+        await refreshStoryComments(story.id, "chapter").catch(() => {});
+        renderCommentPanel(room);
+      });
+    }
+
+    document.getElementById("comment-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const input = document.getElementById("comment-input");
+      const content = input.value.trim();
+      if (!content) {
+        toast("评论未发布", "请先写一点内容。");
+        return;
+      }
+      try {
+        const data = await request(buildApiUrl(`/api/stories/${encodeURIComponent(story.id)}/comments`), {
+          method: "POST",
+          body: JSON.stringify({
+            scope: state.activeCommentScope,
+            paragraphIndex: state.activeParagraphIndex,
+            content
+          })
+        });
+        input.value = "";
+        room.commentSummary = data.summary;
+        await refreshStoryComments(story.id, state.activeCommentScope, state.activeParagraphIndex).catch(() => {});
+        renderCommentPanel(room);
+        refreshParagraphCommentCounts(room);
+        toast("评论已发布", state.activeCommentScope === "chapter" ? "已加入本章评论。" : "已加入段评。");
+      } catch (error) {
+        toast("发布失败", error.message === "unauthorized" ? "请先登录。" : "请稍后再试。");
+      }
+    });
+  }
+
+  function renderCommentPanel(room) {
+    const title = document.getElementById("comment-panel-title");
+    const context = document.getElementById("comment-context");
+    const list = document.getElementById("comment-list");
+    if (!title || !context || !list) return;
+    if (state.activeCommentScope === "paragraph") {
+      title.textContent = `第 ${Number(state.activeParagraphIndex) + 1} 段评论`;
+      context.textContent = state.activeParagraphText.slice(0, 72);
+    } else {
+      title.textContent = `本章评论 ${Number(room.commentSummary?.chapter || 0)}`;
+      context.textContent = "章节评论适合聊整篇内容；点击正文旁“段评”可以评论某一段。";
+    }
+    list.innerHTML = renderCommentItems(state.commentItems);
+  }
+
+  function refreshParagraphCommentCounts(room) {
+    const counts = room.commentSummary?.paragraphs || {};
+    document.querySelectorAll("[data-paragraph-comment]").forEach((button) => {
+      const index = button.getAttribute("data-paragraph-comment");
+      button.textContent = `段评 ${Number(counts[index] || 0)}`;
     });
   }
 
@@ -2069,7 +2386,14 @@
 
   function bindGlobalEvents() {
     document.querySelectorAll("[data-nav]").forEach((node) => {
-      node.addEventListener("click", () => navigate(node.getAttribute("data-nav")));
+      node.addEventListener("click", () => {
+        const roomId = node.getAttribute("data-room");
+        if (roomId) {
+          navigate(node.getAttribute("data-nav"), { room: roomId });
+          return;
+        }
+        navigate(node.getAttribute("data-nav"));
+      });
     });
     document.querySelectorAll("[data-activity-filter]").forEach((node) => {
       node.addEventListener("click", () => {
@@ -2311,6 +2635,17 @@
         disconnectRealtime();
         await refreshFeedback();
         renderFeedback();
+      } else if (route.path === "/search") {
+        disconnectRealtime();
+        await renderSearch();
+      } else if (route.path === "/bookshelf") {
+        disconnectRealtime();
+        await refreshBookshelf();
+        renderBookshelf();
+      } else if (route.path === "/history") {
+        disconnectRealtime();
+        await refreshReadingHistory();
+        renderHistory();
       } else if (route.path === "/import") {
         disconnectRealtime();
         renderImport();

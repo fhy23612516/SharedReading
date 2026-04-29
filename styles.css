@@ -460,6 +460,30 @@ button:disabled {
   margin: 0 0 1.3em;
 }
 
+.paragraph-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+}
+
+.paragraph-comment-button {
+  position: sticky;
+  top: 10px;
+  min-height: 30px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.paragraph-comment-button:hover {
+  color: var(--accent-strong);
+}
+
 .reader-highlight {
   padding: 0 2px;
   border-radius: 4px;
@@ -510,14 +534,16 @@ button:disabled {
 }
 
 .annotation-list,
-.bookmark-list {
+.bookmark-list,
+.comment-list {
   display: grid;
   gap: 8px;
   margin-top: 12px;
 }
 
 .annotation-item,
-.bookmark-item {
+.bookmark-item,
+.comment-item {
   width: 100%;
   padding: 10px 12px;
   border-radius: 14px;
@@ -526,6 +552,16 @@ button:disabled {
   color: var(--text);
   text-align: left;
   line-height: 1.45;
+}
+
+.comment-item {
+  align-items: stretch;
+  justify-content: flex-start;
+  display: grid;
+}
+
+.library-card .tag {
+  margin-bottom: 8px;
 }
 
 .annotation-swatch {

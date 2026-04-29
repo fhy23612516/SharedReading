@@ -5,6 +5,7 @@
 1. `STORAGE_DRIVER=json`：默认模式，继续使用 `data/store.json` 或 `STORE_PATH` 指向的 JSON 文件。
 2. `STORAGE_DRIVER=mysql`：使用 MySQL 表存储用户、登录会话、房间、进度、消息、事件、记录和反馈。
 3. 导入书籍功能会写入 `books` 表。
+4. 书架、浏览记录、章节评论和段落评论会分别写入 `bookshelf_items`、`reading_history`、`story_comments` 表。
 
 建议先在测试环境验证 MySQL，再切正式服务。
 
@@ -62,7 +63,13 @@ sudo mysql < schema/mysql.sql
 
 这个脚本会创建数据库并初始化表结构。应用运行时仍使用上一步创建的 `shared_reading` 用户连接数据库。
 
-如果你之前已经初始化过旧表结构，也可以重新执行这一句。脚本使用 `CREATE TABLE IF NOT EXISTS`，会补建新增的 `books` 表，不会删除现有数据。
+如果你之前已经初始化过旧表结构，也可以重新执行这一句。脚本使用 `CREATE TABLE IF NOT EXISTS`，会补建新增的 `books`、`bookshelf_items`、`reading_history`、`story_comments` 表，不会删除现有数据。
+
+检查核心表：
+
+```bash
+sudo mysql -e "USE shared_reading; SHOW TABLES;"
+```
 
 ## 4. 安装 Node 依赖
 
@@ -128,6 +135,7 @@ curl http://127.0.0.1/api/bootstrap
 3. 如果 MySQL 模式启动失败，先把 `STORAGE_DRIVER` 改回 `json`，恢复服务后再排查日志。
 4. 2 核 2G 可以跑 MySQL MVP，但建议定期备份。
 5. 后续用户增长后建议迁移到阿里云 RDS MySQL。
+6. 本次新增的书架、浏览记录和评论数据是账号数据，生产环境建议尽早启用 MySQL，避免长期依赖本机 JSON 文件。
 
 ## 8. 备份建议
 

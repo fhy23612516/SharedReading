@@ -42,6 +42,41 @@ CREATE TABLE IF NOT EXISTS books (
   INDEX idx_books_owner_created (owner_id, created_at)
 );
 
+CREATE TABLE IF NOT EXISTS story_comments (
+  id VARCHAR(40) PRIMARY KEY,
+  story_id VARCHAR(40) NOT NULL,
+  scope VARCHAR(20) NOT NULL,
+  paragraph_index INT NULL,
+  user_id VARCHAR(40) NOT NULL,
+  user_name VARCHAR(40) NOT NULL,
+  content VARCHAR(500) NOT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  INDEX idx_story_comments_story_scope (story_id, scope, paragraph_index, created_at),
+  INDEX idx_story_comments_user_created (user_id, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS bookshelf_items (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id VARCHAR(40) NOT NULL,
+  story_id VARCHAR(40) NOT NULL,
+  added_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  UNIQUE KEY uniq_bookshelf_user_story (user_id, story_id),
+  INDEX idx_bookshelf_user_updated (user_id, updated_at)
+);
+
+CREATE TABLE IF NOT EXISTS reading_history (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id VARCHAR(40) NOT NULL,
+  story_id VARCHAR(40) NOT NULL,
+  room_id VARCHAR(40),
+  progress DECIMAL(5,1) NOT NULL DEFAULT 0,
+  last_read_at DATETIME NOT NULL,
+  UNIQUE KEY uniq_history_user_story (user_id, story_id),
+  INDEX idx_history_user_last_read (user_id, last_read_at)
+);
+
 CREATE TABLE IF NOT EXISTS rooms (
   id VARCHAR(40) PRIMARY KEY,
   code VARCHAR(12) NOT NULL UNIQUE,
