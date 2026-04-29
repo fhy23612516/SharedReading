@@ -4,6 +4,7 @@
 
 1. `STORAGE_DRIVER=json`：默认模式，继续使用 `data/store.json` 或 `STORE_PATH` 指向的 JSON 文件。
 2. `STORAGE_DRIVER=mysql`：使用 MySQL 表存储用户、登录会话、房间、进度、消息、事件、记录和反馈。
+3. 导入书籍功能会写入 `books` 表。
 
 建议先在测试环境验证 MySQL，再切正式服务。
 
@@ -60,6 +61,8 @@ sudo mysql < schema/mysql.sql
 ```
 
 这个脚本会创建数据库并初始化表结构。应用运行时仍使用上一步创建的 `shared_reading` 用户连接数据库。
+
+如果你之前已经初始化过旧表结构，也可以重新执行这一句。脚本使用 `CREATE TABLE IF NOT EXISTS`，会补建新增的 `books` 表，不会删除现有数据。
 
 ## 4. 安装 Node 依赖
 

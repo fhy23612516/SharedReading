@@ -273,6 +273,15 @@ button:disabled {
   resize: vertical;
 }
 
+.book-import-textarea {
+  min-height: 340px;
+}
+
+.select-input.compact {
+  min-height: 42px;
+  padding: 10px 12px;
+}
+
 .story-card,
 .record-card,
 .sidebar-card,
@@ -392,16 +401,41 @@ button:disabled {
 }
 
 .reader-scroll {
+  --reader-font-size: 18px;
+  --reader-line-height: 1.95;
+  --reader-font-family: "Source Han Serif SC", "Songti SC", "STSong", serif;
   height: min(68vh, 760px);
   overflow: auto;
-  padding-right: 10px;
+  padding: 0 10px 0 0;
   scroll-behavior: smooth;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+  border-radius: 18px;
 }
 
 .reader-scroll.waiting {
   box-shadow: inset 0 -120px 80px -90px rgba(190, 106, 61, 0.26);
+}
+
+.reader-scroll[data-theme="warm"] {
+  background: rgba(255, 244, 219, 0.72);
+  padding: 18px;
+}
+
+.reader-scroll[data-theme="green"] {
+  background: rgba(233, 244, 226, 0.72);
+  padding: 18px;
+}
+
+.reader-scroll[data-theme="dark"] {
+  background: #1d1b18;
+  color: #f0e6d6;
+  padding: 18px;
+}
+
+.reader-scroll[data-theme="dark"] .hero-copy,
+.reader-scroll[data-theme="dark"] .meta-kicker {
+  color: rgba(240, 230, 214, 0.72);
 }
 
 .reader-header {
@@ -417,13 +451,93 @@ button:disabled {
 }
 
 .reader-body {
-  font-family: "Source Han Serif SC", "Songti SC", "STSong", serif;
-  font-size: 18px;
-  line-height: 1.95;
+  font-family: var(--reader-font-family);
+  font-size: var(--reader-font-size);
+  line-height: var(--reader-line-height);
 }
 
 .reader-body p {
   margin: 0 0 1.3em;
+}
+
+.reader-highlight {
+  padding: 0 2px;
+  border-radius: 4px;
+  color: inherit;
+}
+
+.reader-highlight.yellow {
+  background: linear-gradient(180deg, transparent 48%, rgba(255, 210, 88, 0.72) 48%);
+}
+
+.reader-highlight.green {
+  background: linear-gradient(180deg, transparent 48%, rgba(124, 186, 132, 0.52) 48%);
+}
+
+.reading-settings {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.reading-settings label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.setting-row,
+.annotation-item,
+.bookmark-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.setting-row {
+  padding: 10px 0;
+  border-top: 1px solid rgba(116, 84, 50, 0.09);
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.mini-button {
+  min-height: 34px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+}
+
+.annotation-list,
+.bookmark-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.annotation-item,
+.bookmark-item {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(116, 84, 50, 0.1);
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--text);
+  text-align: left;
+  line-height: 1.45;
+}
+
+.annotation-swatch {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #ffd258;
+}
+
+.annotation-swatch.green {
+  background: #7cba84;
 }
 
 .notice-card {

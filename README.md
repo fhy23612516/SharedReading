@@ -23,6 +23,8 @@
 9. Web 和小程序共用的自有账号注册/登录接口
 10. 登录用户反馈提交和“我的反馈”列表
 11. JSON 默认存储 + MySQL 可选存储
+12. 登录用户导入 `.txt` 或粘贴正文作为共读内容
+13. 阅读页字体、字号、行距、主题、划线和书签标签
 
 ## 端口说明
 
@@ -274,6 +276,12 @@ window.__APP_CONFIG__ = {
 
 推荐正式服务器使用 PM2 + Nginx，不再使用 ngrok。
 
+当前正式域名：
+
+```text
+https://shareread.heiheihei.pw
+```
+
 ### 当前项目里相关环境变量
 
 后端：
@@ -332,6 +340,7 @@ window.__APP_CONFIG__ = {
 20. [后续迭代设计-账号反馈MySQL性能.md](</E:/Program Files/VibeCoding/SharedReading/后续迭代设计-账号反馈MySQL性能.md>)
 21. [MySQL迁移与启用.md](</E:/Program Files/VibeCoding/SharedReading/MySQL迁移与启用.md>)
 22. [schema/mysql.sql](</E:/Program Files/VibeCoding/SharedReading/schema/mysql.sql>)
+23. [版本记录.md](</E:/Program Files/VibeCoding/SharedReading/版本记录.md>)
 
 ## 当前产品规则
 
@@ -347,6 +356,8 @@ window.__APP_CONFIG__ = {
 8. 弱网下进度和消息会先本地显示，再自动补发
 9. 动态汇总支持按消息、进度、成员筛选
 10. 离线成员会显示大致离线时长
+11. 导入书籍需要登录账号，导入后只有当前账号在创建房间时可见
+12. 划线和书签标签当前保存在浏览器本地，暂未同步到账号
 
 ## 当前待完善项
 
@@ -356,9 +367,11 @@ window.__APP_CONFIG__ = {
 2. 正式小程序端页面和发布配置
 3. 正式公网部署和 HTTPS 域名
 4. 反馈后台管理和处理状态维护
-5. 更完整的历史记录检索和详情页
-6. 登录安全增强，例如限流、验证码、密码找回
-7. 多设备、多浏览器、弱网条件下的自动化 UI 回归测试
+5. 导入 EPUB/PDF 等复杂格式
+6. 划线和书签同步到账号与小程序
+7. 更完整的历史记录检索和详情页
+8. 登录安全增强，例如限流、验证码、密码找回
+9. 多设备、多浏览器、弱网条件下的自动化 UI 回归测试
 
 下一阶段详细设计见 [后续迭代设计-账号反馈MySQL性能.md](</E:/Program Files/VibeCoding/SharedReading/后续迭代设计-账号反馈MySQL性能.md>)。
 MySQL 启用步骤见 [MySQL迁移与启用.md](</E:/Program Files/VibeCoding/SharedReading/MySQL迁移与启用.md>)。

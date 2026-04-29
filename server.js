@@ -13,7 +13,7 @@ const STORAGE_DRIVER = String(process.env.STORAGE_DRIVER || "json").toLowerCase(
 const AUTH_TOKEN_TTL_DAYS = Number(process.env.AUTH_TOKEN_TTL_DAYS || 30);
 
 let state = STORAGE_DRIVER === "mysql" ? emptyState() : readState();
-const storyMap = new Map(stories.map((story) => [story.id, story]));
+const builtInStoryMap = new Map(stories.map((story) => [story.id, story]));
 const roomStreams = new Map();
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
 let persistDirty = false;
@@ -28,7 +28,8 @@ function emptyState() {
     rooms: {},
     records: [],
     authSessions: {},
-    feedback: []
+    feedback: [],
+    books: []
   };
 }
 
@@ -41,7 +42,8 @@ function readState() {
       rooms: parsed.rooms || {},
       records: parsed.records || [],
       authSessions: parsed.authSessions || {},
-      feedback: parsed.feedback || []
+      feedback: parsed.feedback || [],
+      books: Array.isArray(parsed.books) ? parsed.books : []
     };
   } catch (error) {
     return emptyState();
@@ -127,6 +129,21 @@ async function ensureMysqlSchema() {
       revoked_at DATETIME NULL,
       INDEX idx_auth_sessions_user_id (user_id),
       INDEX idx_auth_sessions_expires_at (expires_at)
+    )`,
+    `CREATE TABLE IF NOT EXISTS books (
+      id VARCHAR(40) PRIMARY KEY,
+      owner_id VARCHAR(40),
+      title VARCHAR(120) NOT NULL,
+      author VARCHAR(80),
+      cover VARCHAR(30),
+      summary TEXT,
+      body_json JSON NOT NULL,
+      text_content MEDIUMTEXT NOT NULL,
+      word_count INT NOT NULL,
+      tags_json JSON NULL,
+      created_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL,
+      INDEX idx_books_owner_created (owner_id, created_at)
     )`,
     `CREATE TABLE IF NOT EXISTS rooms (
       id VARCHAR(40) PRIMARY KEY,
@@ -228,6 +245,7 @@ async function readMysqlState() {
   const [
     [userRows],
     [sessionRows],
+    [bookRows],
     [roomRows],
     [memberRows],
     [progressRows],
@@ -238,6 +256,7 @@ async function readMysqlState() {
   ] = await Promise.all([
     pool.query("SELECT * FROM users"),
     pool.query("SELECT * FROM auth_sessions"),
+    pool.query("SELECT * FROM books ORDER BY created_at DESC"),
     pool.query("SELECT * FROM rooms"),
     pool.query("SELECT * FROM room_members ORDER BY joined_at ASC"),
     pool.query("SELECT * FROM reading_progress"),
@@ -270,6 +289,37 @@ async function readMysqlState() {
       createdAt: toIso(row.created_at) || now(),
       expiresAt: toIso(row.expires_at) || now(),
       revokedAt: toIso(row.revoked_at)
+    };
+  });
+
+  next.books = bookRows.map((row) => {
+    let body = [];
+    let tags = [];
+    try {
+      body = Array.isArray(row.body_json) ? row.body_json : JSON.parse(row.body_json || "[]");
+    } catch {
+      body = [];
+    }
+    try {
+      tags = Array.isArray(row.tags_json) ? row.tags_json : JSON.parse(row.tags_json || "[]");
+    } catch {
+      tags = [];
+    }
+    const text = row.text_content || body.join("\n\n");
+    return {
+      id: row.id,
+      ownerId: row.owner_id || null,
+      title: row.title,
+      author: row.author || "用户导入",
+      cover: row.cover || "导入书籍",
+      summary: row.summary || text.slice(0, 80),
+      body,
+      text,
+      wordCount: Number(row.word_count || text.replace(/\s+/g, "").length),
+      tags,
+      source: "imported",
+      createdAt: toIso(row.created_at) || now(),
+      updatedAt: toIso(row.updated_at) || now()
     };
   });
 
@@ -385,6 +435,7 @@ async function saveMysqlState() {
     await connection.query("DELETE FROM reading_records");
     await connection.query("DELETE FROM feedback");
     await connection.query("DELETE FROM auth_sessions");
+    await connection.query("DELETE FROM books");
     await connection.query("DELETE FROM rooms");
     await connection.query("DELETE FROM users");
 
@@ -417,6 +468,30 @@ async function saveMysqlState() {
           toMysqlDate(session.createdAt) || toMysqlDate(now()),
           toMysqlDate(session.expiresAt) || toMysqlDate(now()),
           toMysqlDate(session.revokedAt)
+        ]
+      );
+    }
+
+    for (const book of state.books || []) {
+      const body = Array.isArray(book.body) ? book.body : normalizeBookText(book.text || "").body;
+      const text = book.text || body.join("\n\n");
+      await connection.query(
+        `INSERT INTO books
+          (id, owner_id, title, author, cover, summary, body_json, text_content, word_count, tags_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          book.id,
+          book.ownerId || null,
+          book.title,
+          book.author || "用户导入",
+          book.cover || "导入书籍",
+          book.summary || text.slice(0, 80),
+          JSON.stringify(body),
+          text,
+          Number(book.wordCount || text.replace(/\s+/g, "").length),
+          JSON.stringify(book.tags || []),
+          toMysqlDate(book.createdAt) || toMysqlDate(now()),
+          toMysqlDate(book.updatedAt) || toMysqlDate(now())
         ]
       );
     }
@@ -769,6 +844,20 @@ function parseBody(req) {
 }
 
 function sanitizeStory(story) {
+  if (!story) {
+    return {
+      id: "missing-story",
+      title: "内容已不可用",
+      author: "系统",
+      cover: "缺失",
+      summary: "这个房间关联的阅读内容暂时找不到。",
+      body: ["这个房间关联的阅读内容暂时找不到。"],
+      text: "这个房间关联的阅读内容暂时找不到。",
+      wordCount: 17,
+      source: "missing",
+      tags: []
+    };
+  }
   return {
     id: story.id,
     title: story.title,
@@ -777,8 +866,43 @@ function sanitizeStory(story) {
     summary: story.summary,
     body: story.body,
     text: story.text,
-    wordCount: story.wordCount
+    wordCount: story.wordCount,
+    source: story.source || "builtin",
+    tags: story.tags || []
   };
+}
+
+function normalizeBookText(text) {
+  const normalized = String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+  const body = normalized
+    .split(/\n{2,}/)
+    .map((part) => part.replace(/\n/g, " ").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const fallbackBody = body.length ? body : normalized.split("\n").map((part) => part.trim()).filter(Boolean);
+  const finalBody = fallbackBody.length ? fallbackBody : [normalized];
+  return {
+    text: finalBody.join("\n\n"),
+    body: finalBody,
+    wordCount: finalBody.join("").replace(/\s+/g, "").length
+  };
+}
+
+function getImportedBooks() {
+  return Array.isArray(state.books) ? state.books : [];
+}
+
+function getVisibleStories(user = null) {
+  const imported = getImportedBooks().filter((book) => !book.ownerId || user?.id === book.ownerId);
+  return [...stories, ...imported];
+}
+
+function getStoryById(storyId, user = null) {
+  if (builtInStoryMap.has(storyId)) return builtInStoryMap.get(storyId);
+  return getImportedBooks().find((book) => book.id === storyId && (!user || !book.ownerId || book.ownerId === user.id));
 }
 
 function createRoomCode() {
@@ -923,7 +1047,7 @@ function maybeCompleteRoom(room) {
 }
 
 function normalizeRoom(room) {
-  const story = storyMap.get(room.storyId);
+  const story = getStoryById(room.storyId);
   return {
     ...room,
     story: sanitizeStory(story),
@@ -1020,11 +1144,77 @@ function serveStatic(res, filePath) {
 
 async function handleApi(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/bootstrap") {
+    const user = getAuthenticatedUser(req);
     sendJson(res, 200, {
-      stories: stories.map(sanitizeStory),
+      stories: getVisibleStories(user).map(sanitizeStory),
       waitOptions: [5, 8, 12, 15],
       quickMessages: ["我等你", "慢慢读", "这段好看", "哈哈哈", "读到这里告诉我", "我刚看到一个重点"]
     });
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/books/mine") {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return true;
+    }
+    const books = getImportedBooks().filter((book) => book.ownerId === user.id).map(sanitizeStory);
+    sendJson(res, 200, { books });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/books/import") {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return true;
+    }
+    const body = await parseBody(req).catch((error) => ({ __error: error.message }));
+    if (body.__error) {
+      sendJson(res, 400, { error: body.__error });
+      return true;
+    }
+    const title = String(body.title || "").trim().slice(0, 80);
+    const author = String(body.author || "用户导入").trim().slice(0, 40) || "用户导入";
+    const summaryInput = String(body.summary || "").trim().slice(0, 160);
+    const tags = String(body.tags || "")
+      .split(/[,，\s]+/)
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+      .slice(0, 8);
+    const normalized = normalizeBookText(body.text || body.content || "");
+    if (title.length < 1) {
+      sendJson(res, 400, { error: "book_title_required" });
+      return true;
+    }
+    if (normalized.wordCount < 30) {
+      sendJson(res, 400, { error: "book_content_too_short" });
+      return true;
+    }
+    if (normalized.text.length > 500_000) {
+      sendJson(res, 400, { error: "book_content_too_long" });
+      return true;
+    }
+    const createdAt = now();
+    const book = {
+      id: uid("book"),
+      ownerId: user.id,
+      title,
+      author,
+      cover: "导入书籍",
+      summary: summaryInput || normalized.text.slice(0, 90),
+      body: normalized.body,
+      text: normalized.text,
+      wordCount: normalized.wordCount,
+      tags,
+      source: "imported",
+      createdAt,
+      updatedAt: createdAt
+    };
+    state.books = [book, ...getImportedBooks()].slice(0, 200);
+    persistState();
+    sendJson(res, 201, { book: sanitizeStory(book) });
     return true;
   }
 
@@ -1198,7 +1388,8 @@ async function handleApi(req, res, url) {
       sendJson(res, 400, { error: result.error });
       return true;
     }
-    const story = storyMap.get(body.storyId);
+    const user = result.user;
+    const story = getStoryById(body.storyId, user);
     const threshold = Number(body.threshold);
     if (!story) {
       sendJson(res, 400, { error: "story_not_found" });
@@ -1208,7 +1399,6 @@ async function handleApi(req, res, url) {
       sendJson(res, 400, { error: "invalid_threshold" });
       return true;
     }
-    const user = result.user;
     const createdAt = now();
     const room = {
       id: uid("room"),

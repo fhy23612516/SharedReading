@@ -3,7 +3,17 @@
     user: "shared-reading-user-v2",
     roomId: "shared-reading-room-v2",
     outbox: "shared-reading-outbox-v2",
-    authToken: "shared-reading-auth-token-v1"
+    authToken: "shared-reading-auth-token-v1",
+    readingPrefs: "shared-reading-reading-prefs-v1",
+    annotations: "shared-reading-annotations-v1",
+    bookmarks: "shared-reading-bookmarks-v1"
+  };
+
+  const DEFAULT_READING_PREFS = {
+    fontSize: 18,
+    lineHeight: 1.95,
+    fontFamily: "serif",
+    theme: "paper"
   };
 
   const state = {
@@ -33,7 +43,9 @@
     activityFilter: "all",
     relativeTimeTimer: null,
     authToken: "",
-    feedbackItems: []
+    feedbackItems: [],
+    readingPrefs: { ...DEFAULT_READING_PREFS },
+    selectedText: ""
   };
 
   const APP_CONFIG = window.__APP_CONFIG__ || {};
@@ -128,6 +140,44 @@
 
   function loadAuthToken() {
     return localStorage.getItem(STORAGE_KEYS.authToken) || sessionStorage.getItem(STORAGE_KEYS.authToken) || "";
+  }
+
+  function loadReadingPrefs() {
+    const saved = loadStoredJson(STORAGE_KEYS.readingPrefs) || {};
+    return {
+      fontSize: Math.max(15, Math.min(26, Number(saved.fontSize) || DEFAULT_READING_PREFS.fontSize)),
+      lineHeight: Math.max(1.5, Math.min(2.4, Number(saved.lineHeight) || DEFAULT_READING_PREFS.lineHeight)),
+      fontFamily: ["serif", "system", "song", "kai"].includes(saved.fontFamily) ? saved.fontFamily : DEFAULT_READING_PREFS.fontFamily,
+      theme: ["paper", "warm", "green", "dark"].includes(saved.theme) ? saved.theme : DEFAULT_READING_PREFS.theme
+    };
+  }
+
+  function saveReadingPrefs(nextPrefs) {
+    state.readingPrefs = { ...state.readingPrefs, ...nextPrefs };
+    saveStoredJson(STORAGE_KEYS.readingPrefs, state.readingPrefs);
+    applyReadingPrefs();
+  }
+
+  function getStoryAnnotations(storyId) {
+    const all = loadStoredJson(STORAGE_KEYS.annotations) || {};
+    return Array.isArray(all[storyId]) ? all[storyId] : [];
+  }
+
+  function saveStoryAnnotations(storyId, annotations) {
+    const all = loadStoredJson(STORAGE_KEYS.annotations) || {};
+    all[storyId] = annotations.slice(0, 80);
+    saveStoredJson(STORAGE_KEYS.annotations, all);
+  }
+
+  function getStoryBookmarks(storyId) {
+    const all = loadStoredJson(STORAGE_KEYS.bookmarks) || {};
+    return Array.isArray(all[storyId]) ? all[storyId] : [];
+  }
+
+  function saveStoryBookmarks(storyId, bookmarks) {
+    const all = loadStoredJson(STORAGE_KEYS.bookmarks) || {};
+    all[storyId] = bookmarks.slice(0, 80);
+    saveStoredJson(STORAGE_KEYS.bookmarks, all);
   }
 
   function saveActiveRoomId(roomId) {
@@ -388,6 +438,9 @@
   }
 
   async function bootstrap() {
+    state.user = loadSessionUser();
+    state.authToken = loadAuthToken();
+    state.readingPrefs = loadReadingPrefs();
     const [bootstrapData, recordsData] = await Promise.all([
       request(buildApiUrl("/api/bootstrap")),
       request(buildApiUrl("/api/records"))
@@ -396,8 +449,6 @@
     state.waitOptions = bootstrapData.waitOptions;
     state.quickMessages = bootstrapData.quickMessages;
     state.records = recordsData.records;
-    state.user = loadSessionUser();
-    state.authToken = loadAuthToken();
     if (state.authToken) {
       try {
         const data = await request(buildApiUrl("/api/auth/me"));
@@ -413,8 +464,74 @@
     state.records = (await request(buildApiUrl("/api/records"))).records;
   }
 
+  async function refreshBootstrapData() {
+    const data = await request(buildApiUrl("/api/bootstrap"));
+    state.stories = data.stories;
+    state.waitOptions = data.waitOptions;
+    state.quickMessages = data.quickMessages;
+  }
+
   function getStory(storyId) {
     return state.stories.find((story) => story.id === storyId);
+  }
+
+  function getReaderFontFamily(fontFamily) {
+    const options = {
+      serif: "\"Source Han Serif SC\", \"Songti SC\", \"STSong\", serif",
+      system: "\"Avenir Next\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+      song: "\"SimSun\", \"Songti SC\", \"STSong\", serif",
+      kai: "\"KaiTi\", \"Kaiti SC\", serif"
+    };
+    return options[fontFamily] || options.serif;
+  }
+
+  function applyReadingPrefs() {
+    const reader = document.getElementById("reader-scroll");
+    if (!reader) return;
+    const prefs = state.readingPrefs;
+    reader.style.setProperty("--reader-font-size", `${prefs.fontSize}px`);
+    reader.style.setProperty("--reader-line-height", String(prefs.lineHeight));
+    reader.style.setProperty("--reader-font-family", getReaderFontFamily(prefs.fontFamily));
+    reader.dataset.theme = prefs.theme;
+  }
+
+  function renderParagraphWithAnnotations(paragraph, annotations) {
+    const source = String(paragraph || "");
+    const matches = [];
+    annotations.forEach((annotation) => {
+      const text = String(annotation.text || "").trim();
+      if (!text || text.length > 80) return;
+      const index = source.indexOf(text);
+      if (index >= 0) {
+        matches.push({ start: index, end: index + text.length, text, color: annotation.color || "yellow" });
+      }
+    });
+
+    matches.sort((a, b) => a.start - b.start || b.end - a.end);
+    const filtered = [];
+    let cursor = -1;
+    matches.forEach((match) => {
+      if (match.start >= cursor) {
+        filtered.push(match);
+        cursor = match.end;
+      }
+    });
+
+    if (!filtered.length) return escapeHtml(source);
+    let html = "";
+    let last = 0;
+    filtered.forEach((match) => {
+      html += escapeHtml(source.slice(last, match.start));
+      html += `<mark class="reader-highlight ${escapeHtml(match.color)}">${escapeHtml(source.slice(match.start, match.end))}</mark>`;
+      last = match.end;
+    });
+    html += escapeHtml(source.slice(last));
+    return html;
+  }
+
+  function renderReaderBody(story) {
+    const annotations = getStoryAnnotations(story.id);
+    return story.body.map((paragraph) => `<p>${renderParagraphWithAnnotations(paragraph, annotations)}</p>`).join("");
   }
 
   async function ensureServerUser(name) {
@@ -540,6 +657,32 @@
     `).join("");
   }
 
+  function renderAnnotationList(storyId) {
+    const annotations = getStoryAnnotations(storyId).slice(0, 5);
+    if (!annotations.length) {
+      return `<div class="empty-text">选中文章中的文字后，可以点“划线”。</div>`;
+    }
+    return annotations.map((item) => `
+      <div class="annotation-item">
+        <span class="annotation-swatch ${escapeHtml(item.color || "yellow")}"></span>
+        <span>${escapeHtml(item.text)}</span>
+      </div>
+    `).join("");
+  }
+
+  function renderBookmarkList(storyId) {
+    const bookmarks = getStoryBookmarks(storyId).slice(0, 6);
+    if (!bookmarks.length) {
+      return `<div class="empty-text">添加书签后，可以快速跳回阅读位置。</div>`;
+    }
+    return bookmarks.map((item) => `
+      <button type="button" class="bookmark-item" data-bookmark-progress="${Number(item.progress || 0)}">
+        <span>${escapeHtml(item.label || "书签")}</span>
+        <strong>${Number(item.progress || 0).toFixed(1)}%</strong>
+      </button>
+    `).join("");
+  }
+
   function pageChrome(title, body, rightActionHtml = "") {
     return `
       <div class="topbar">
@@ -576,7 +719,7 @@
       <div class="story-card">
         <div class="tag">${story.cover}</div>
         <h3>${escapeHtml(story.title)}</h3>
-        <div class="story-meta">${escapeHtml(story.author)} · ${story.wordCount} 字</div>
+        <div class="story-meta">${escapeHtml(story.author)} · ${story.wordCount} 字${story.source === "imported" ? " · 我的导入" : ""}</div>
         <p>${escapeHtml(story.summary)}</p>
       </div>
     `).join("");
@@ -596,6 +739,7 @@
         <div class="button-row">
           <button class="button primary" data-nav="/create">创建房间</button>
           <button class="button secondary" data-nav="/join">加入房间</button>
+          <button class="button secondary" data-nav="/import">导入书籍</button>
           ${activeRoomId ? `<button class="button secondary" id="resume-room">回到上次房间</button>` : ""}
           <button class="button secondary" data-nav="/feedback">反馈</button>
           ${state.authToken ? `<button class="button ghost" id="logout-user">退出账号</button>` : `<button class="button ghost" data-nav="/auth">登录/注册</button>`}
@@ -604,8 +748,8 @@
       </section>
 
       <section class="panel" style="margin-top: 18px;">
-        <div class="section-kicker">内置内容</div>
-        <h2 class="section-title">先选一篇一起读的</h2>
+        <div class="section-kicker">阅读内容</div>
+        <h2 class="section-title">内置内容和你导入的书</h2>
         <div class="card-grid">${storyCards}</div>
       </section>
 
@@ -706,6 +850,7 @@
         saveAuthToken(data.token);
         state.user = data.user;
         saveSessionUser(data.user);
+        await refreshBootstrapData();
         toast("登录成功", "已切换到你的正式账号。");
         navigate("/");
       } catch (error) {
@@ -726,6 +871,7 @@
         saveAuthToken(data.token);
         state.user = data.user;
         saveSessionUser(data.user);
+        await refreshBootstrapData();
         toast("注册成功", "账号已创建并登录。");
         navigate("/");
       } catch (error) {
@@ -818,6 +964,114 @@
     }
   }
 
+  function renderImport() {
+    app.innerHTML = pageChrome(
+      "导入书籍",
+      `
+        <section class="panel">
+          <div class="section-kicker">个人书库</div>
+          <h2 class="section-title">导入 `.txt` 或直接粘贴正文</h2>
+          <p class="hero-copy">导入后会保存到后端，创建房间时可以直接选择这本书。当前导入内容归你的账号所有。</p>
+          ${state.authToken ? `
+            <form id="book-import-form" class="form-stack">
+              <div class="reader-grid">
+                <div class="field">
+                  <label>书名</label>
+                  <input class="text-input" id="book-title" maxlength="80" placeholder="例如：我的故事" />
+                </div>
+                <div class="field">
+                  <label>作者 / 来源</label>
+                  <input class="text-input" id="book-author" maxlength="40" placeholder="可选" />
+                </div>
+              </div>
+              <div class="field">
+                <label>标签</label>
+                <input class="text-input" id="book-tags" maxlength="80" placeholder="可选，例如 小说 情感 睡前读物" />
+              </div>
+              <div class="field">
+                <label>选择 .txt 文件</label>
+                <input class="text-input" id="book-file" type="file" accept=".txt,text/plain" />
+                <div class="muted">文件只会读取文本内容，不会上传原文件名以外的信息。</div>
+              </div>
+              <div class="field">
+                <label>正文</label>
+                <textarea class="textarea-input book-import-textarea" id="book-text" placeholder="把正文粘贴到这里，或选择 .txt 后自动填入。段落之间建议空一行。"></textarea>
+              </div>
+              <div class="field">
+                <label>简介（可选）</label>
+                <textarea class="textarea-input" id="book-summary" maxlength="160" placeholder="不填时会自动截取正文开头。"></textarea>
+              </div>
+              <div class="button-row">
+                <button class="button primary" type="submit">保存到我的书库</button>
+                <button class="button secondary" type="button" data-nav="/create">去创建房间</button>
+              </div>
+            </form>
+          ` : `
+            <div class="record-card">
+              <p class="empty-text">导入书籍需要先登录账号，避免公共服务被匿名写入大量内容。</p>
+              <button class="button primary" data-nav="/auth">去登录/注册</button>
+            </div>
+          `}
+        </section>
+      `
+    );
+
+    const fileInput = document.getElementById("book-file");
+    if (fileInput) {
+      fileInput.addEventListener("change", () => {
+        const file = fileInput.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const text = String(reader.result || "");
+          document.getElementById("book-text").value = text;
+          const titleInput = document.getElementById("book-title");
+          if (!titleInput.value.trim()) {
+            titleInput.value = file.name.replace(/\.[^.]+$/, "").slice(0, 80);
+          }
+        };
+        reader.readAsText(file, "utf-8");
+      });
+    }
+
+    const form = document.getElementById("book-import-form");
+    if (form) {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const title = document.getElementById("book-title").value.trim();
+        const author = document.getElementById("book-author").value.trim();
+        const tags = document.getElementById("book-tags").value.trim();
+        const text = document.getElementById("book-text").value.trim();
+        const summary = document.getElementById("book-summary").value.trim();
+        if (!title) {
+          toast("导入失败", "请填写书名。");
+          return;
+        }
+        if (text.replace(/\s+/g, "").length < 30) {
+          toast("导入失败", "正文太短，至少需要 30 个字。");
+          return;
+        }
+        try {
+          const data = await request(buildApiUrl("/api/books/import"), {
+            method: "POST",
+            body: JSON.stringify({ title, author, tags, text, summary })
+          });
+          state.stories = [...state.stories.filter((story) => story.id !== data.book.id), data.book];
+          toast("导入成功", "这本书已经可以用于创建房间。");
+          navigate("/create");
+        } catch (error) {
+          const messages = {
+            unauthorized: "请先登录账号。",
+            book_title_required: "请填写书名。",
+            book_content_too_short: "正文太短。",
+            book_content_too_long: "正文太长，当前单本上限约 50 万字符。"
+          };
+          toast("导入失败", messages[error.message] || "请稍后再试。");
+        }
+      });
+    }
+  }
+
   function renderRecords() {
     app.innerHTML = pageChrome(
       "历史记录",
@@ -851,7 +1105,7 @@
                   <button type="button" class="story-card ${index === 0 ? "selected" : ""}" data-story="${story.id}">
                     <div class="tag">${story.cover}</div>
                     <h3>${escapeHtml(story.title)}</h3>
-                    <div class="story-meta">${story.wordCount} 字 · ${escapeHtml(story.author)}</div>
+                    <div class="story-meta">${story.wordCount} 字 · ${escapeHtml(story.author)}${story.source === "imported" ? " · 我的导入" : ""}</div>
                     <p>${escapeHtml(story.summary)}</p>
                   </button>
                 `).join("")}
@@ -1138,6 +1392,51 @@
           </section>
 
           <section class="sidebar-card">
+            <div class="meta-kicker">阅读设置</div>
+            <div class="reading-settings">
+              <label>字体</label>
+              <select class="select-input compact" id="reader-font-family">
+                <option value="serif" ${state.readingPrefs.fontFamily === "serif" ? "selected" : ""}>默认书籍字体</option>
+                <option value="system" ${state.readingPrefs.fontFamily === "system" ? "selected" : ""}>跟随系统字体</option>
+                <option value="song" ${state.readingPrefs.fontFamily === "song" ? "selected" : ""}>宋体</option>
+                <option value="kai" ${state.readingPrefs.fontFamily === "kai" ? "selected" : ""}>楷体</option>
+              </select>
+              <label>主题</label>
+              <select class="select-input compact" id="reader-theme">
+                <option value="paper" ${state.readingPrefs.theme === "paper" ? "selected" : ""}>纸张</option>
+                <option value="warm" ${state.readingPrefs.theme === "warm" ? "selected" : ""}>暖黄</option>
+                <option value="green" ${state.readingPrefs.theme === "green" ? "selected" : ""}>护眼</option>
+                <option value="dark" ${state.readingPrefs.theme === "dark" ? "selected" : ""}>夜间</option>
+              </select>
+              <div class="setting-row">
+                <span>字号 <strong id="reader-font-size-label">${state.readingPrefs.fontSize}px</strong></span>
+                <div>
+                  <button class="mini-button" type="button" data-font-delta="-1">A-</button>
+                  <button class="mini-button" type="button" data-font-delta="1">A+</button>
+                </div>
+              </div>
+              <div class="setting-row">
+                <span>行距 <strong id="reader-line-height-label">${state.readingPrefs.lineHeight.toFixed(2)}</strong></span>
+                <div>
+                  <button class="mini-button" type="button" data-line-delta="-0.05">-</button>
+                  <button class="mini-button" type="button" data-line-delta="0.05">+</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="sidebar-card">
+            <div class="meta-kicker">划线和标签</div>
+            <p class="record-meta" id="selection-preview">选中正文文字后，可保存为划线。</p>
+            <div class="button-row">
+              <button class="button secondary" type="button" id="save-highlight" disabled>划线</button>
+              <button class="button ghost" type="button" id="add-bookmark">添加书签</button>
+            </div>
+            <div class="annotation-list" id="annotation-list">${renderAnnotationList(story.id)}</div>
+            <div class="bookmark-list" id="bookmark-list">${renderBookmarkList(story.id)}</div>
+          </section>
+
+          <section class="sidebar-card">
             <div class="meta-kicker">动态汇总</div>
             <div class="quick-actions activity-filters" id="activity-filters">
               ${renderActivityFilters()}
@@ -1193,7 +1492,7 @@
                 <p class="hero-copy" style="margin:0;">${escapeHtml(story.summary)}</p>
               </div>
               <div class="reader-body">
-                ${story.body.map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`).join("")}
+                ${renderReaderBody(story)}
               </div>
             </div>
           </section>
@@ -1218,6 +1517,7 @@
     );
 
     bindReader(room);
+    bindReadingTools(room);
     bindChat(room);
     startRelativeTimeTicker();
 
@@ -1422,6 +1722,7 @@
     const ratio = Math.max(0, Math.min(1, (myProgress.maxProgress || 0) / 100));
     const maxScroll = Math.max(0, reader.scrollHeight - reader.clientHeight);
     reader.scrollTop = ratio * maxScroll;
+    applyReadingPrefs();
 
     let pending = false;
     let lastSent = myProgress.maxProgress || 0;
@@ -1449,6 +1750,102 @@
         queueProgressFlush(currentRoom.id, lastSent);
       });
     }, { passive: true });
+  }
+
+  function bindReadingTools(room) {
+    const reader = document.getElementById("reader-scroll");
+    if (!reader) return;
+    const story = room.story;
+    const fontSelect = document.getElementById("reader-font-family");
+    const themeSelect = document.getElementById("reader-theme");
+    const fontLabel = document.getElementById("reader-font-size-label");
+    const lineLabel = document.getElementById("reader-line-height-label");
+    const preview = document.getElementById("selection-preview");
+    const saveHighlight = document.getElementById("save-highlight");
+    const addBookmark = document.getElementById("add-bookmark");
+    const annotationList = document.getElementById("annotation-list");
+    const bookmarkList = document.getElementById("bookmark-list");
+
+    const refreshLabels = () => {
+      if (fontLabel) fontLabel.textContent = `${state.readingPrefs.fontSize}px`;
+      if (lineLabel) lineLabel.textContent = state.readingPrefs.lineHeight.toFixed(2);
+    };
+
+    fontSelect?.addEventListener("change", () => saveReadingPrefs({ fontFamily: fontSelect.value }));
+    themeSelect?.addEventListener("change", () => saveReadingPrefs({ theme: themeSelect.value }));
+    document.querySelectorAll("[data-font-delta]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const next = Math.max(15, Math.min(26, state.readingPrefs.fontSize + Number(button.getAttribute("data-font-delta"))));
+        saveReadingPrefs({ fontSize: next });
+        refreshLabels();
+      });
+    });
+    document.querySelectorAll("[data-line-delta]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const next = Math.max(1.5, Math.min(2.4, state.readingPrefs.lineHeight + Number(button.getAttribute("data-line-delta"))));
+        saveReadingPrefs({ lineHeight: Number(next.toFixed(2)) });
+        refreshLabels();
+      });
+    });
+
+    const updateSelection = () => {
+      const selection = window.getSelection();
+      const selected = selection ? String(selection.toString()).replace(/\s+/g, " ").trim().slice(0, 80) : "";
+      const insideReader = selection?.anchorNode ? reader.contains(selection.anchorNode) : false;
+      state.selectedText = insideReader ? selected : "";
+      if (preview) {
+        preview.textContent = state.selectedText ? `已选中：${state.selectedText}` : "选中正文文字后，可保存为划线。";
+      }
+      if (saveHighlight) {
+        saveHighlight.disabled = !state.selectedText;
+      }
+    };
+
+    reader.addEventListener("mouseup", updateSelection);
+    reader.addEventListener("touchend", () => setTimeout(updateSelection, 80), { passive: true });
+
+    saveHighlight?.addEventListener("click", () => {
+      const text = state.selectedText.trim();
+      if (!text) return;
+      const annotations = getStoryAnnotations(story.id);
+      const exists = annotations.some((item) => item.text === text);
+      const next = exists
+        ? annotations
+        : [{ id: `ann-${Date.now()}`, text, color: "yellow", createdAt: new Date().toISOString() }, ...annotations];
+      saveStoryAnnotations(story.id, next);
+      const body = document.querySelector(".reader-body");
+      if (body) body.innerHTML = renderReaderBody(story);
+      if (annotationList) annotationList.innerHTML = renderAnnotationList(story.id);
+      window.getSelection()?.removeAllRanges();
+      state.selectedText = "";
+      updateSelection();
+      toast(exists ? "已存在划线" : "已保存划线", text);
+    });
+
+    addBookmark?.addEventListener("click", () => {
+      const maxScroll = Math.max(1, reader.scrollHeight - reader.clientHeight);
+      const progress = Math.max(0, Math.min(100, (reader.scrollTop / maxScroll) * 100));
+      const label = window.prompt("给这个位置取个标签", `${progress.toFixed(1)}%`);
+      if (label === null) return;
+      const bookmarks = getStoryBookmarks(story.id);
+      const next = [{
+        id: `bookmark-${Date.now()}`,
+        label: label.trim().slice(0, 18) || `${progress.toFixed(1)}%`,
+        progress,
+        createdAt: new Date().toISOString()
+      }, ...bookmarks];
+      saveStoryBookmarks(story.id, next);
+      if (bookmarkList) bookmarkList.innerHTML = renderBookmarkList(story.id);
+      toast("已添加书签", `${progress.toFixed(1)}%`);
+    });
+
+    bookmarkList?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-bookmark-progress]");
+      if (!button) return;
+      const progress = Number(button.getAttribute("data-bookmark-progress"));
+      const maxScroll = Math.max(0, reader.scrollHeight - reader.clientHeight);
+      reader.scrollTo({ top: (Math.max(0, Math.min(100, progress)) / 100) * maxScroll, behavior: "smooth" });
+    });
   }
 
   function queueProgressFlush(roomId, progress) {
@@ -1914,6 +2311,9 @@
         disconnectRealtime();
         await refreshFeedback();
         renderFeedback();
+      } else if (route.path === "/import") {
+        disconnectRealtime();
+        renderImport();
       } else if (route.path === "/waiting") {
         const room = await syncRoomFromRoute(route);
         if (!room) {

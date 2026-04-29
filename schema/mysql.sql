@@ -26,6 +26,22 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   INDEX idx_auth_sessions_expires_at (expires_at)
 );
 
+CREATE TABLE IF NOT EXISTS books (
+  id VARCHAR(40) PRIMARY KEY,
+  owner_id VARCHAR(40),
+  title VARCHAR(120) NOT NULL,
+  author VARCHAR(80),
+  cover VARCHAR(30),
+  summary TEXT,
+  body_json JSON NOT NULL,
+  text_content MEDIUMTEXT NOT NULL,
+  word_count INT NOT NULL,
+  tags_json JSON NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  INDEX idx_books_owner_created (owner_id, created_at)
+);
+
 CREATE TABLE IF NOT EXISTS rooms (
   id VARCHAR(40) PRIMARY KEY,
   code VARCHAR(12) NOT NULL UNIQUE,

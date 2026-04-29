@@ -108,6 +108,23 @@ async function main() {
   const feedbackList = await request("/api/feedback/mine", "GET", null, authHeaders);
   assert.equal(feedbackList.items.length, 1, "feedback list should include my feedback");
 
+  const imported = await request("/api/books/import", "POST", {
+    title: "Imported Smoke Book",
+    author: "Smoke Test",
+    tags: "test import",
+    text: "第一段用于测试导入书籍功能，内容需要足够长。\n\n第二段用于确认后端可以拆分段落，并在创建房间时使用导入内容。"
+  }, authHeaders);
+  assert.ok(imported.book.id, "imported book should have an id");
+
+  const bootWithBook = await request("/api/bootstrap", "GET", null, authHeaders);
+  assert.ok(bootWithBook.stories.some((story) => story.id === imported.book.id), "bootstrap should include my imported book");
+
+  const importedRoom = await request("/api/rooms", "POST", {
+    storyId: imported.book.id,
+    threshold: 8
+  }, authHeaders);
+  assert.equal(importedRoom.room.story.id, imported.book.id, "room can use imported book");
+
   const alice = (await request("/api/session", "POST", { name: "Alice" })).user;
   const bob = (await request("/api/session", "POST", { name: "Bob" })).user;
 
