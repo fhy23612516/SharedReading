@@ -760,6 +760,12 @@
     `).join("");
   }
 
+  function getStorySourceLabel(story) {
+    if (story.source === "imported") return "我的导入";
+    if (story.source === "public-domain") return "公版名著";
+    return "站内内容";
+  }
+
   function renderStoryLibraryCard(item, options = {}) {
     const story = item.story || item;
     const history = item.history || null;
@@ -775,11 +781,12 @@
       <div class="record-card library-card">
         <div class="book-cover">${escapeHtml(story.cover || "阅读")}</div>
         <div class="library-card-body">
-          <div class="tag">${escapeHtml(story.source === "imported" ? "我的导入" : "站内内容")}</div>
+          <div class="tag">${escapeHtml(getStorySourceLabel(story))}</div>
           <h3>${escapeHtml(story.title)}</h3>
           <div class="story-meta">${escapeHtml(story.author || "未知作者")} · ${Number(story.wordCount || 0)} 字</div>
           <p>${escapeHtml(story.summary || "")}</p>
           ${history ? `<p class="record-meta">上次读到 ${Number(history.progress || 0).toFixed(1)}% · ${formatRelativeTime(history.lastReadAt)}</p>` : ""}
+          ${story.licenseNote ? `<p class="record-meta">${escapeHtml(story.licenseNote)}</p>` : ""}
           <div class="button-row">
             ${actions}
             ${bookshelfAction}
@@ -826,10 +833,11 @@
       <div class="story-card book-tile">
         <div class="book-cover">${escapeHtml(story.cover)}</div>
         <div class="book-tile-body">
-          <div class="tag">${story.source === "imported" ? "我的导入" : "站内内容"}</div>
+          <div class="tag">${escapeHtml(getStorySourceLabel(story))}</div>
           <h3>${escapeHtml(story.title)}</h3>
           <div class="story-meta">${escapeHtml(story.author)} · ${story.wordCount} 字</div>
           <p>${escapeHtml(story.summary)}</p>
+          ${story.licenseNote ? `<p class="record-meta">${escapeHtml(story.licenseNote)}</p>` : ""}
         </div>
       </div>
     `).join("");

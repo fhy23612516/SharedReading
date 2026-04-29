@@ -80,6 +80,10 @@ async function main() {
   await listen();
   const bootstrap = await waitForServer();
   assert.ok(bootstrap.stories.length >= 1, "bootstrap should return stories");
+  assert.ok(
+    bootstrap.stories.some((story) => story.source === "public-domain" && story.sourceUrl && story.licenseNote),
+    "bootstrap should include public domain source metadata"
+  );
 
   const registered = await request("/api/auth/register", "POST", {
     account: `alice-${process.pid}`,

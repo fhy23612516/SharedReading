@@ -990,7 +990,9 @@ function sanitizeStory(story) {
     text: story.text,
     wordCount: story.wordCount,
     source: story.source || "builtin",
-    tags: story.tags || []
+    tags: story.tags || [],
+    sourceUrl: story.sourceUrl || "",
+    licenseNote: story.licenseNote || ""
   };
 }
 
