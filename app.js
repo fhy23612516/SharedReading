@@ -773,15 +773,18 @@
       : "";
     return `
       <div class="record-card library-card">
-        <div class="tag">${escapeHtml(story.cover || "内容")}</div>
-        <h3>${escapeHtml(story.title)}</h3>
-        <div class="story-meta">${escapeHtml(story.author || "未知作者")} · ${Number(story.wordCount || 0)} 字${story.source === "imported" ? " · 我的导入" : ""}</div>
-        <p>${escapeHtml(story.summary || "")}</p>
-        ${history ? `<p class="record-meta">上次读到 ${Number(history.progress || 0).toFixed(1)}% · ${formatRelativeTime(history.lastReadAt)}</p>` : ""}
-        <div class="button-row">
-          ${actions}
-          ${bookshelfAction}
-          ${removeAction}
+        <div class="book-cover">${escapeHtml(story.cover || "阅读")}</div>
+        <div class="library-card-body">
+          <div class="tag">${escapeHtml(story.source === "imported" ? "我的导入" : "站内内容")}</div>
+          <h3>${escapeHtml(story.title)}</h3>
+          <div class="story-meta">${escapeHtml(story.author || "未知作者")} · ${Number(story.wordCount || 0)} 字</div>
+          <p>${escapeHtml(story.summary || "")}</p>
+          ${history ? `<p class="record-meta">上次读到 ${Number(history.progress || 0).toFixed(1)}% · ${formatRelativeTime(history.lastReadAt)}</p>` : ""}
+          <div class="button-row">
+            ${actions}
+            ${bookshelfAction}
+            ${removeAction}
+          </div>
         </div>
       </div>
     `;
@@ -820,55 +823,91 @@
     const activeRoomId = loadActiveRoomId();
     const user = state.user;
     const storyCards = state.stories.map((story) => `
-      <div class="story-card">
-        <div class="tag">${story.cover}</div>
-        <h3>${escapeHtml(story.title)}</h3>
-        <div class="story-meta">${escapeHtml(story.author)} · ${story.wordCount} 字${story.source === "imported" ? " · 我的导入" : ""}</div>
-        <p>${escapeHtml(story.summary)}</p>
+      <div class="story-card book-tile">
+        <div class="book-cover">${escapeHtml(story.cover)}</div>
+        <div class="book-tile-body">
+          <div class="tag">${story.source === "imported" ? "我的导入" : "站内内容"}</div>
+          <h3>${escapeHtml(story.title)}</h3>
+          <div class="story-meta">${escapeHtml(story.author)} · ${story.wordCount} 字</div>
+          <p>${escapeHtml(story.summary)}</p>
+        </div>
       </div>
     `).join("");
 
     const recordsHtml = renderRecordCards(state.records.slice(0, 4));
 
     app.innerHTML = `
-      <section class="hero-card">
-        <div class="hero-kicker">后端联通版</div>
-        <h1 class="hero-title">一起阅读</h1>
-        <p class="hero-copy">两个人看同一篇内容，实时看到彼此的阅读进度、消息和在线状态。现在不再强制同步，只保留一起读的体验。</p>
-        <div class="stats-grid">
+      <header class="home-nav">
+        <div class="brand-mark">
+          <span>共读</span>
+          <strong>一起等你读</strong>
+        </div>
+        <div class="home-nav-actions">
+          <button class="nav-link" data-nav="/search">搜索</button>
+          <button class="nav-link" data-nav="/bookshelf">书架</button>
+          <button class="nav-link" data-nav="/history">历史</button>
+          <button class="nav-link" data-nav="/import">导入</button>
+          ${state.authToken ? `<button class="button ghost" id="logout-user">退出账号</button>` : `<button class="button ghost" data-nav="/auth">登录/注册</button>`}
+        </div>
+      </header>
+
+      <section class="hero-card portal-hero">
+        <div class="portal-copy">
+          <div class="hero-kicker">双人共读 · 小说阅读器布局</div>
+          <h1 class="hero-title">找一本书，和 TA 一起读。</h1>
+          <p class="hero-copy">首页按书城和书架思路整理：搜索、收藏、继续阅读、创建房间都放在入口层；阅读页以正文为中心，评论和聊天作为辅助。</p>
+          <form class="portal-search" id="home-search-form">
+            <input class="text-input" id="home-search-input" placeholder="搜索标题、作者、简介或正文" />
+            <button class="button primary" type="submit">搜索</button>
+          </form>
+          <div class="button-row portal-actions">
+            <button class="button primary" data-nav="/create">创建共读房间</button>
+            <button class="button secondary" data-nav="/join">输入房间码</button>
+            ${activeRoomId ? `<button class="button secondary" id="resume-room">继续上次房间</button>` : ""}
+            <button class="button ghost" id="rename-user">改昵称</button>
+          </div>
+        </div>
+        <div class="portal-side">
           <div class="stat-pill"><span>当前身份<strong>${user ? escapeHtml(user.name) : "未登录"}</strong></span></div>
           <div class="stat-pill"><span>内容数量<strong>${state.stories.length} 篇</strong></span></div>
-          <div class="stat-pill"><span>房间恢复<strong>${activeRoomId ? "可回到上次房间" : "暂无"}</strong></span></div>
-        </div>
-        <div class="button-row">
-          <button class="button primary" data-nav="/create">创建房间</button>
-          <button class="button secondary" data-nav="/join">加入房间</button>
-          <button class="button secondary" data-nav="/search">搜索</button>
-          <button class="button secondary" data-nav="/bookshelf">书架</button>
-          <button class="button secondary" data-nav="/history">浏览记录</button>
-          <button class="button secondary" data-nav="/import">导入书籍</button>
-          ${activeRoomId ? `<button class="button secondary" id="resume-room">回到上次房间</button>` : ""}
-          <button class="button secondary" data-nav="/feedback">反馈</button>
-          ${state.authToken ? `<button class="button ghost" id="logout-user">退出账号</button>` : `<button class="button ghost" data-nav="/auth">登录/注册</button>`}
-          <button class="button ghost" id="rename-user">改个昵称</button>
+          <div class="stat-pill"><span>房间恢复<strong>${activeRoomId ? "可继续" : "暂无"}</strong></span></div>
+          <button class="button secondary" data-nav="/feedback">反馈入口</button>
         </div>
       </section>
 
-      <section class="panel" style="margin-top: 18px;">
-        <div class="section-kicker">阅读内容</div>
-        <h2 class="section-title">内置内容和你导入的书</h2>
-        <div class="card-grid">${storyCards}</div>
+      <section class="panel novel-section" style="margin-top: 18px;">
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">书城</div>
+            <h2 class="section-title">可共读内容</h2>
+          </div>
+          <button class="button secondary" data-nav="/search">进入搜索</button>
+        </div>
+        <div class="bookshelf-grid">${storyCards}</div>
       </section>
 
       <section class="panel" style="margin-top: 18px;">
-        <div class="section-kicker">最近记录</div>
-        <h2 class="section-title">已经完成的房间</h2>
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">最近记录</div>
+            <h2 class="section-title">共读房间动态</h2>
+          </div>
+          <button class="button secondary" data-nav="/records">查看全部</button>
+        </div>
         <div class="record-list">${recordsHtml}</div>
-        <div class="button-row" style="margin-top: 16px;">
-          <button class="button secondary" data-nav="/records">查看全部记录</button>
-        </div>
       </section>
     `;
+
+    document.getElementById("home-search-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const query = document.getElementById("home-search-input").value.trim();
+      if (!query) {
+        navigate("/search");
+        return;
+      }
+      localStorage.setItem(STORAGE_KEYS.lastSearch, query);
+      navigate("/search");
+    });
 
     document.getElementById("rename-user").addEventListener("click", async () => {
       const currentName = state.user?.name || "";
@@ -1563,6 +1602,30 @@
 
     return `
       <div class="reader-layout">
+        <main class="reader-main">
+          <section class="reader-card">
+            <div class="notice-anchor">
+              <div class="notice-card success" id="room-notice">
+                <h3 id="notice-title">一起读就行。</h3>
+                <p id="notice-body">${otherMember ? `你们当前进度差 ${difference}% ，这里只做参考展示，不会强制拦截阅读。` : "对方加入后，你们就能看到彼此的进度和消息动态。"}</p>
+              </div>
+              <div id="left-notice" style="display:none;"></div>
+              <div class="live-feed" id="live-feed"></div>
+            </div>
+
+            <div class="reader-scroll" id="reader-scroll">
+              <div class="reader-header">
+                <div class="meta-kicker">${story.cover} · ${escapeHtml(story.author)}</div>
+                <h2>${escapeHtml(story.title)}</h2>
+                <p class="hero-copy" style="margin:0;">${escapeHtml(story.summary)}</p>
+              </div>
+              <div class="reader-body">
+                ${renderReaderBody(story, room.commentSummary)}
+              </div>
+            </div>
+          </section>
+        </main>
+
         <aside class="reader-side">
           <section class="sidebar-card">
             <div class="meta-kicker">当前状态</div>
@@ -1700,30 +1763,6 @@
             </div>
           </section>
         </aside>
-
-        <div class="reader-main">
-          <section class="reader-card">
-            <div class="notice-anchor">
-              <div class="notice-card success" id="room-notice">
-                <h3 id="notice-title">一起读就行。</h3>
-                <p id="notice-body">${otherMember ? `你们当前进度差 ${difference}% ，这里只做参考展示，不会强制拦截阅读。` : "对方加入后，你们就能看到彼此的进度和消息动态。"}</p>
-              </div>
-              <div id="left-notice" style="display:none;"></div>
-              <div class="live-feed" id="live-feed"></div>
-            </div>
-
-            <div class="reader-scroll" id="reader-scroll">
-              <div class="reader-header">
-                <div class="meta-kicker">${story.cover} · ${escapeHtml(story.author)}</div>
-                <h2>${escapeHtml(story.title)}</h2>
-                <p class="hero-copy" style="margin:0;">${escapeHtml(story.summary)}</p>
-              </div>
-              <div class="reader-body">
-                ${renderReaderBody(story, room.commentSummary)}
-              </div>
-            </div>
-          </section>
-        </div>
       </div>
     `;
   }
