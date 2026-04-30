@@ -11,6 +11,10 @@ const ROOT_DIR = __dirname;
 const STORE_PATH = process.env.STORE_PATH || path.join(ROOT_DIR, "data", "store.json");
 const STORAGE_DRIVER = String(process.env.STORAGE_DRIVER || "json").toLowerCase();
 const AUTH_TOKEN_TTL_DAYS = Number(process.env.AUTH_TOKEN_TTL_DAYS || 30);
+const DEFAULT_BODY_LIMIT = 1_000_000;
+const BOOK_IMPORT_BODY_LIMIT = 2_500_000;
+const BOOK_IMPORT_TEXT_LIMIT = 500_000;
+const BOOK_IMPORT_MIN_WORDS = 30;
 
 let state = STORAGE_DRIVER === "mysql" ? emptyState() : readState();
 const builtInStoryMap = new Map(stories.map((story) => [story.id, story]));
@@ -940,12 +944,15 @@ function sendNotFound(res) {
   sendJson(res, 404, { error: "not_found" });
 }
 
-function parseBody(req) {
+function parseBody(req, options = {}) {
+  const maxLength = Number(options.maxLength || DEFAULT_BODY_LIMIT);
   return new Promise((resolve, reject) => {
     let raw = "";
+    let rawBytes = 0;
     req.on("data", (chunk) => {
+      rawBytes += chunk.length;
       raw += chunk;
-      if (raw.length > 1_000_000) {
+      if (rawBytes > maxLength) {
         reject(new Error("payload_too_large"));
         req.destroy();
       }
@@ -1522,7 +1529,7 @@ async function handleApi(req, res, url) {
       sendJson(res, 401, { error: "unauthorized" });
       return true;
     }
-    const body = await parseBody(req).catch((error) => ({ __error: error.message }));
+    const body = await parseBody(req, { maxLength: BOOK_IMPORT_BODY_LIMIT }).catch((error) => ({ __error: error.message }));
     if (body.__error) {
       sendJson(res, 400, { error: body.__error });
       return true;
@@ -1540,11 +1547,11 @@ async function handleApi(req, res, url) {
       sendJson(res, 400, { error: "book_title_required" });
       return true;
     }
-    if (normalized.wordCount < 30) {
+    if (normalized.wordCount < BOOK_IMPORT_MIN_WORDS) {
       sendJson(res, 400, { error: "book_content_too_short" });
       return true;
     }
-    if (normalized.text.length > 500_000) {
+    if (normalized.text.length > BOOK_IMPORT_TEXT_LIMIT) {
       sendJson(res, 400, { error: "book_content_too_long" });
       return true;
     }

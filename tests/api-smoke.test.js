@@ -79,6 +79,9 @@ function close() {
 async function main() {
   const frontendSource = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
   assert.ok(!frontendSource.includes("导入 `.txt`"), "import page should not contain raw backticks inside template literal text");
+  assert.ok(frontendSource.includes('id="book-encoding"'), "import page should include encoding selector");
+  assert.ok(frontendSource.includes("GBK / GB18030"), "import page should support common Chinese TXT encoding");
+  assert.ok(frontendSource.includes("import-preview"), "import page should include local preview panel");
 
   await listen();
   const bootstrap = await waitForServer();
@@ -214,6 +217,14 @@ async function main() {
 
   const records = (await request("/api/records")).records;
   assert.ok(records.some((item) => item.roomId === created.room.id), "closed active room should create a record");
+
+  const largeImportText = "测".repeat(360_000);
+  const largeImport = await request("/api/books/import", "POST", {
+    title: "Large Import Smoke Book",
+    author: "Smoke Test",
+    text: largeImportText
+  }, authHeaders);
+  assert.ok(largeImport.book.id, "import endpoint should accept a body larger than the default API body limit");
 
   console.log("api smoke test passed");
 }

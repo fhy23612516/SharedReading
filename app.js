@@ -16,6 +16,9 @@
     fontFamily: "serif",
     theme: "paper"
   };
+  const IMPORT_MIN_WORDS = 30;
+  const IMPORT_MAX_TEXT_LENGTH = 500_000;
+  const IMPORT_MAX_REQUEST_BYTES = 2_500_000;
 
   const state = {
     user: null,
@@ -1221,6 +1224,75 @@
     });
   }
 
+  function getImportStats(input) {
+    const text = String(input.text || "");
+    const title = String(input.title || "");
+    const author = String(input.author || "");
+    const tags = String(input.tags || "");
+    const summary = String(input.summary || "");
+    const normalized = text.trim();
+    const wordCount = normalized.replace(/\s+/g, "").length;
+    const paragraphs = normalized
+      .split(/\n{2,}/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    const chapterMatches = normalized.match(/(^|\n)\s*(第[零〇一二三四五六七八九十百千万两\d]+[章节回卷部][^\n]{0,50}|Chapter\s+\d+[^\n]{0,60})/gi) || [];
+    const replacementCount = (normalized.match(/\uFFFD/g) || []).length;
+    let requestBytes = 0;
+    try {
+      requestBytes = new Blob([JSON.stringify({ title, author, tags, text, summary })]).size;
+    } catch {
+      requestBytes = JSON.stringify({ title, author, tags, text, summary }).length;
+    }
+    const warnings = [];
+    if (replacementCount > 0) warnings.push("检测到乱码替换符，建议切换编码后重新读取。");
+    if (wordCount > 0 && wordCount < IMPORT_MIN_WORDS) warnings.push(`正文至少需要 ${IMPORT_MIN_WORDS} 个字。`);
+    if (normalized.length > IMPORT_MAX_TEXT_LENGTH) warnings.push("正文超过当前单本上限，需要拆分后导入。");
+    if (requestBytes > IMPORT_MAX_REQUEST_BYTES) warnings.push("提交体积过大，建议减少正文长度或分章节导入。");
+    return {
+      wordCount,
+      paragraphCount: paragraphs.length,
+      chapterCount: chapterMatches.length,
+      replacementCount,
+      requestBytes,
+      warnings
+    };
+  }
+
+  function renderImportPreview(stats) {
+    if (!stats.wordCount) {
+      return `<div class="empty-text">选择 TXT 或粘贴正文后，这里会显示字数、段落数、章节识别和风险提示。</div>`;
+    }
+    const status = stats.warnings.length
+      ? `<div class="import-warnings">${stats.warnings.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>`
+      : `<p class="record-meta">文本看起来可以导入。保存前仍可调整书名、作者、标签和简介。</p>`;
+    return `
+      <div class="import-stats">
+        <span>字数<strong>${stats.wordCount}</strong></span>
+        <span>段落<strong>${stats.paragraphCount}</strong></span>
+        <span>章节<strong>${stats.chapterCount || "未识别"}</strong></span>
+        <span>请求体<strong>${Math.ceil(stats.requestBytes / 1024)}KB</strong></span>
+      </div>
+      ${status}
+    `;
+  }
+
+  function readFileAsArrayBuffer(file) {
+    if (typeof file.arrayBuffer === "function") return file.arrayBuffer();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error || new Error("file_read_failed"));
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  async function decodeTextFile(file, encoding) {
+    const buffer = await readFileAsArrayBuffer(file);
+    const decoder = new TextDecoder(encoding || "utf-8");
+    return decoder.decode(buffer);
+  }
+
   function renderImport() {
     app.innerHTML = pageChrome(
       "导入书籍",
@@ -1248,18 +1320,30 @@
               <div class="field">
                 <label>选择 .txt 文件</label>
                 <input class="text-input" id="book-file" type="file" accept=".txt,text/plain" />
-                <div class="muted">文件只会读取文本内容，不会上传原文件名以外的信息。</div>
+                <div class="reader-grid">
+                  <div class="field">
+                    <label>文件编码</label>
+                    <select class="select-input compact" id="book-encoding">
+                      <option value="utf-8">UTF-8</option>
+                      <option value="gb18030">GBK / GB18030</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="muted">如果导入后出现乱码，切换编码后重新选择或重新读取文件。</div>
               </div>
               <div class="field">
                 <label>正文</label>
                 <textarea class="textarea-input book-import-textarea" id="book-text" placeholder="把正文粘贴到这里，或选择 .txt 后自动填入。段落之间建议空一行。"></textarea>
+              </div>
+              <div class="import-preview" id="import-preview">
+                <div class="empty-text">选择 TXT 或粘贴正文后，这里会显示字数、段落数、章节识别和风险提示。</div>
               </div>
               <div class="field">
                 <label>简介（可选）</label>
                 <textarea class="textarea-input" id="book-summary" maxlength="160" placeholder="不填时会自动截取正文开头。"></textarea>
               </div>
               <div class="button-row">
-                <button class="button primary" type="submit">保存到我的书库</button>
+                <button class="button primary" id="book-import-submit" type="submit">保存到我的书库</button>
                 <button class="button secondary" type="button" data-nav="/create">去创建房间</button>
               </div>
             </form>
@@ -1274,43 +1358,72 @@
     );
 
     const fileInput = document.getElementById("book-file");
+    const encodingInput = document.getElementById("book-encoding");
+    const preview = document.getElementById("import-preview");
+    const textInput = document.getElementById("book-text");
+    const updatePreview = () => {
+      if (!preview) return;
+      preview.innerHTML = renderImportPreview(getImportStats({
+        title: document.getElementById("book-title")?.value || "",
+        author: document.getElementById("book-author")?.value || "",
+        tags: document.getElementById("book-tags")?.value || "",
+        text: textInput?.value || "",
+        summary: document.getElementById("book-summary")?.value || ""
+      }));
+    };
+    const loadSelectedFile = async () => {
+      const file = fileInput?.files?.[0];
+      if (!file) return;
+      try {
+        const text = await decodeTextFile(file, encodingInput?.value || "utf-8");
+        document.getElementById("book-text").value = text;
+        const titleInput = document.getElementById("book-title");
+        if (!titleInput.value.trim()) {
+          titleInput.value = file.name.replace(/\.[^.]+$/, "").slice(0, 80);
+        }
+        updatePreview();
+      } catch (error) {
+        toast("读取失败", "当前浏览器不支持这个编码，或文件无法读取。");
+      }
+    };
     if (fileInput) {
-      fileInput.addEventListener("change", () => {
-        const file = fileInput.files?.[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          const text = String(reader.result || "");
-          document.getElementById("book-text").value = text;
-          const titleInput = document.getElementById("book-title");
-          if (!titleInput.value.trim()) {
-            titleInput.value = file.name.replace(/\.[^.]+$/, "").slice(0, 80);
-          }
-        };
-        reader.readAsText(file, "utf-8");
-      });
+      fileInput.addEventListener("change", loadSelectedFile);
     }
+    if (encodingInput) encodingInput.addEventListener("change", loadSelectedFile);
+    ["book-title", "book-author", "book-tags", "book-text", "book-summary"].forEach((id) => {
+      document.getElementById(id)?.addEventListener("input", updatePreview);
+    });
 
     const form = document.getElementById("book-import-form");
     if (form) {
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
+        const submitButton = document.getElementById("book-import-submit");
         const title = document.getElementById("book-title").value.trim();
         const author = document.getElementById("book-author").value.trim();
         const tags = document.getElementById("book-tags").value.trim();
         const text = document.getElementById("book-text").value.trim();
         const summary = document.getElementById("book-summary").value.trim();
+        const stats = getImportStats({ title, author, tags, text, summary });
+        updatePreview();
         if (!title) {
           toast("导入失败", "请填写书名。");
           return;
         }
-        if (text.replace(/\s+/g, "").length < 30) {
+        if (stats.wordCount < IMPORT_MIN_WORDS) {
           toast("导入失败", "正文太短，至少需要 30 个字。");
           return;
         }
+        if (text.length > IMPORT_MAX_TEXT_LENGTH || stats.requestBytes > IMPORT_MAX_REQUEST_BYTES) {
+          toast("导入失败", "正文太长，建议分章节或缩短后导入。");
+          return;
+        }
         try {
+          submitButton.disabled = true;
+          submitButton.textContent = "正在保存...";
           const data = await request(buildApiUrl("/api/books/import"), {
             method: "POST",
+            timeoutMs: 30000,
             body: JSON.stringify({ title, author, tags, text, summary })
           });
           state.stories = [...state.stories.filter((story) => story.id !== data.book.id), data.book];
@@ -1321,9 +1434,15 @@
             unauthorized: "请先登录账号。",
             book_title_required: "请填写书名。",
             book_content_too_short: "正文太短。",
-            book_content_too_long: "正文太长，当前单本上限约 50 万字符。"
+            book_content_too_long: "正文太长，当前单本上限约 50 万字符。",
+            payload_too_large: "提交内容过大，请拆分后再导入。",
+            invalid_json: "提交数据格式异常，请刷新后重试。",
+            request_timeout: "导入请求超时，建议先拆分正文或换到更稳定网络。"
           };
-          toast("导入失败", messages[error.message] || "请稍后再试。");
+          toast("导入失败", messages[error.message] || "网络或服务器异常，请稍后再试。");
+        } finally {
+          submitButton.disabled = false;
+          submitButton.textContent = "保存到我的书库";
         }
       });
     }
