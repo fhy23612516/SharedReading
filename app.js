@@ -39,6 +39,7 @@
     queuedProgressValue: null,
     lastProgressSentAt: 0,
     readerProgressCleanup: null,
+    readingToolsCleanup: null,
     lastMessageAt: 0,
     lastRoomSnapshot: null,
     liveFeedTimers: [],
@@ -755,6 +756,70 @@
         <strong>${Number(item.progress || 0).toFixed(1)}%</strong>
       </button>
     `).join("");
+  }
+
+  function renderReadingSettingsControls() {
+    return `
+      <div class="reading-settings">
+        <label>字体</label>
+        <select class="select-input compact" id="reader-font-family" data-reader-font-family>
+          <option value="serif" ${state.readingPrefs.fontFamily === "serif" ? "selected" : ""}>默认书籍字体</option>
+          <option value="system" ${state.readingPrefs.fontFamily === "system" ? "selected" : ""}>跟随系统字体</option>
+          <option value="song" ${state.readingPrefs.fontFamily === "song" ? "selected" : ""}>宋体</option>
+          <option value="kai" ${state.readingPrefs.fontFamily === "kai" ? "selected" : ""}>楷体</option>
+        </select>
+        <label>主题</label>
+        <select class="select-input compact" id="reader-theme" data-reader-theme>
+          <option value="paper" ${state.readingPrefs.theme === "paper" ? "selected" : ""}>纸张</option>
+          <option value="warm" ${state.readingPrefs.theme === "warm" ? "selected" : ""}>暖黄</option>
+          <option value="green" ${state.readingPrefs.theme === "green" ? "selected" : ""}>护眼</option>
+          <option value="dark" ${state.readingPrefs.theme === "dark" ? "selected" : ""}>夜间</option>
+        </select>
+        <div class="setting-row">
+          <span>字号 <strong id="reader-font-size-label" data-reader-font-size-label>${state.readingPrefs.fontSize}px</strong></span>
+          <div>
+            <button class="mini-button" type="button" data-font-delta="-1">A-</button>
+            <button class="mini-button" type="button" data-font-delta="1">A+</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <span>行距 <strong id="reader-line-height-label" data-reader-line-height-label>${state.readingPrefs.lineHeight.toFixed(2)}</strong></span>
+          <div>
+            <button class="mini-button" type="button" data-line-delta="-0.05">-</button>
+            <button class="mini-button" type="button" data-line-delta="0.05">+</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderMobileReadingTools(story) {
+    const mobileSettings = renderReadingSettingsControls()
+      .replace('id="reader-font-family"', 'id="reader-font-family-mobile"')
+      .replace('id="reader-theme"', 'id="reader-theme-mobile"')
+      .replace('id="reader-font-size-label"', 'id="reader-font-size-label-mobile"')
+      .replace('id="reader-line-height-label"', 'id="reader-line-height-label-mobile"');
+    return `
+      <div class="reader-mobile-tools">
+        <div class="reader-mobile-tool-header">
+          <span class="meta-kicker">手机阅读工具</span>
+          <span class="record-meta">字号、划线和书签</span>
+        </div>
+        ${mobileSettings}
+        <div class="reader-mobile-selection">
+          <p class="record-meta" data-selection-preview>长按选中正文后，可保存为划线。</p>
+          <div class="button-row">
+            <button class="button secondary" type="button" data-save-highlight disabled>划线</button>
+            <button class="button ghost" type="button" data-add-bookmark>添加书签</button>
+          </div>
+        </div>
+        <details class="mobile-saved-tools">
+          <summary>查看划线和书签</summary>
+          <div class="annotation-list" data-annotation-list>${renderAnnotationList(story.id)}</div>
+          <div class="bookmark-list" data-bookmark-list>${renderBookmarkList(story.id)}</div>
+        </details>
+      </div>
+    `;
   }
 
   function renderCommentItems(items) {
@@ -2038,6 +2103,8 @@
               <div class="live-feed" id="live-feed"></div>
             </div>
 
+            ${renderMobileReadingTools(story)}
+
             <div class="reader-scroll" id="reader-scroll">
               <div class="reader-header">
                 <div class="meta-kicker">${story.cover} · ${escapeHtml(story.author)}</div>
@@ -2090,47 +2157,18 @@
 
           <section class="sidebar-card">
             <div class="meta-kicker">阅读设置</div>
-            <div class="reading-settings">
-              <label>字体</label>
-              <select class="select-input compact" id="reader-font-family">
-                <option value="serif" ${state.readingPrefs.fontFamily === "serif" ? "selected" : ""}>默认书籍字体</option>
-                <option value="system" ${state.readingPrefs.fontFamily === "system" ? "selected" : ""}>跟随系统字体</option>
-                <option value="song" ${state.readingPrefs.fontFamily === "song" ? "selected" : ""}>宋体</option>
-                <option value="kai" ${state.readingPrefs.fontFamily === "kai" ? "selected" : ""}>楷体</option>
-              </select>
-              <label>主题</label>
-              <select class="select-input compact" id="reader-theme">
-                <option value="paper" ${state.readingPrefs.theme === "paper" ? "selected" : ""}>纸张</option>
-                <option value="warm" ${state.readingPrefs.theme === "warm" ? "selected" : ""}>暖黄</option>
-                <option value="green" ${state.readingPrefs.theme === "green" ? "selected" : ""}>护眼</option>
-                <option value="dark" ${state.readingPrefs.theme === "dark" ? "selected" : ""}>夜间</option>
-              </select>
-              <div class="setting-row">
-                <span>字号 <strong id="reader-font-size-label">${state.readingPrefs.fontSize}px</strong></span>
-                <div>
-                  <button class="mini-button" type="button" data-font-delta="-1">A-</button>
-                  <button class="mini-button" type="button" data-font-delta="1">A+</button>
-                </div>
-              </div>
-              <div class="setting-row">
-                <span>行距 <strong id="reader-line-height-label">${state.readingPrefs.lineHeight.toFixed(2)}</strong></span>
-                <div>
-                  <button class="mini-button" type="button" data-line-delta="-0.05">-</button>
-                  <button class="mini-button" type="button" data-line-delta="0.05">+</button>
-                </div>
-              </div>
-            </div>
+            ${renderReadingSettingsControls()}
           </section>
 
           <section class="sidebar-card">
             <div class="meta-kicker">划线和标签</div>
-            <p class="record-meta" id="selection-preview">选中正文文字后，可保存为划线。</p>
+            <p class="record-meta" id="selection-preview" data-selection-preview>选中正文文字后，可保存为划线。</p>
             <div class="button-row">
-              <button class="button secondary" type="button" id="save-highlight" disabled>划线</button>
-              <button class="button ghost" type="button" id="add-bookmark">添加书签</button>
+              <button class="button secondary" type="button" id="save-highlight" data-save-highlight disabled>划线</button>
+              <button class="button ghost" type="button" id="add-bookmark" data-add-bookmark>添加书签</button>
             </div>
-            <div class="annotation-list" id="annotation-list">${renderAnnotationList(story.id)}</div>
-            <div class="bookmark-list" id="bookmark-list">${renderBookmarkList(story.id)}</div>
+            <div class="annotation-list" id="annotation-list" data-annotation-list>${renderAnnotationList(story.id)}</div>
+            <div class="bookmark-list" id="bookmark-list" data-bookmark-list>${renderBookmarkList(story.id)}</div>
           </section>
 
           <section class="sidebar-card">
@@ -2475,6 +2513,40 @@
     }
   }
 
+  function cleanupReadingTools() {
+    if (state.readingToolsCleanup) {
+      state.readingToolsCleanup();
+      state.readingToolsCleanup = null;
+    }
+  }
+
+  function getReaderSelectedText(reader) {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return "";
+    const selected = String(selection.toString()).replace(/\s+/g, " ").trim().slice(0, 120);
+    if (!selected) return "";
+    const anchorInside = selection.anchorNode ? reader.contains(selection.anchorNode) : false;
+    const focusInside = selection.focusNode ? reader.contains(selection.focusNode) : false;
+    if (anchorInside || focusInside) return selected;
+
+    try {
+      const range = selection.getRangeAt(0);
+      if (range.intersectsNode(reader)) return selected;
+    } catch {
+      return "";
+    }
+    return "";
+  }
+
+  function refreshReadingToolLists(storyId) {
+    document.querySelectorAll("[data-annotation-list]").forEach((node) => {
+      node.innerHTML = renderAnnotationList(storyId);
+    });
+    document.querySelectorAll("[data-bookmark-list]").forEach((node) => {
+      node.innerHTML = renderBookmarkList(storyId);
+    });
+  }
+
   function bindReader(room) {
     const reader = document.getElementById("reader-scroll");
     if (!reader) return;
@@ -2523,95 +2595,150 @@
   function bindReadingTools(room) {
     const reader = document.getElementById("reader-scroll");
     if (!reader) return;
+    cleanupReadingTools();
     const story = room.story;
-    const fontSelect = document.getElementById("reader-font-family");
-    const themeSelect = document.getElementById("reader-theme");
-    const fontLabel = document.getElementById("reader-font-size-label");
-    const lineLabel = document.getElementById("reader-line-height-label");
-    const preview = document.getElementById("selection-preview");
-    const saveHighlight = document.getElementById("save-highlight");
-    const addBookmark = document.getElementById("add-bookmark");
-    const annotationList = document.getElementById("annotation-list");
-    const bookmarkList = document.getElementById("bookmark-list");
+    const fontSelects = [...document.querySelectorAll("[data-reader-font-family]")];
+    const themeSelects = [...document.querySelectorAll("[data-reader-theme]")];
+    const fontLabels = [...document.querySelectorAll("[data-reader-font-size-label]")];
+    const lineLabels = [...document.querySelectorAll("[data-reader-line-height-label]")];
+    const previewNodes = [...document.querySelectorAll("[data-selection-preview]")];
+    const saveHighlightButtons = [...document.querySelectorAll("[data-save-highlight]")];
+    const addBookmarkButtons = [...document.querySelectorAll("[data-add-bookmark]")];
+    const cleanupTasks = [];
 
-    const refreshLabels = () => {
-      if (fontLabel) fontLabel.textContent = `${state.readingPrefs.fontSize}px`;
-      if (lineLabel) lineLabel.textContent = state.readingPrefs.lineHeight.toFixed(2);
+    const syncControls = () => {
+      fontSelects.forEach((select) => {
+        select.value = state.readingPrefs.fontFamily;
+      });
+      themeSelects.forEach((select) => {
+        select.value = state.readingPrefs.theme;
+      });
+      fontLabels.forEach((label) => {
+        label.textContent = `${state.readingPrefs.fontSize}px`;
+      });
+      lineLabels.forEach((label) => {
+        label.textContent = state.readingPrefs.lineHeight.toFixed(2);
+      });
     };
 
-    fontSelect?.addEventListener("change", () => saveReadingPrefs({ fontFamily: fontSelect.value }));
-    themeSelect?.addEventListener("change", () => saveReadingPrefs({ theme: themeSelect.value }));
+    fontSelects.forEach((select) => {
+      const onChange = () => {
+        saveReadingPrefs({ fontFamily: select.value });
+        syncControls();
+      };
+      select.addEventListener("change", onChange);
+      cleanupTasks.push(() => select.removeEventListener("change", onChange));
+    });
+
+    themeSelects.forEach((select) => {
+      const onChange = () => {
+        saveReadingPrefs({ theme: select.value });
+        syncControls();
+      };
+      select.addEventListener("change", onChange);
+      cleanupTasks.push(() => select.removeEventListener("change", onChange));
+    });
+
     document.querySelectorAll("[data-font-delta]").forEach((button) => {
-      button.addEventListener("click", () => {
+      const onClick = () => {
         const next = Math.max(15, Math.min(26, state.readingPrefs.fontSize + Number(button.getAttribute("data-font-delta"))));
         saveReadingPrefs({ fontSize: next });
-        refreshLabels();
-      });
+        syncControls();
+      };
+      button.addEventListener("click", onClick);
+      cleanupTasks.push(() => button.removeEventListener("click", onClick));
     });
+
     document.querySelectorAll("[data-line-delta]").forEach((button) => {
-      button.addEventListener("click", () => {
+      const onClick = () => {
         const next = Math.max(1.5, Math.min(2.4, state.readingPrefs.lineHeight + Number(button.getAttribute("data-line-delta"))));
         saveReadingPrefs({ lineHeight: Number(next.toFixed(2)) });
-        refreshLabels();
-      });
+        syncControls();
+      };
+      button.addEventListener("click", onClick);
+      cleanupTasks.push(() => button.removeEventListener("click", onClick));
     });
 
     const updateSelection = () => {
-      const selection = window.getSelection();
-      const selected = selection ? String(selection.toString()).replace(/\s+/g, " ").trim().slice(0, 80) : "";
-      const insideReader = selection?.anchorNode ? reader.contains(selection.anchorNode) : false;
-      state.selectedText = insideReader ? selected : "";
-      if (preview) {
-        preview.textContent = state.selectedText ? `已选中：${state.selectedText}` : "选中正文文字后，可保存为划线。";
-      }
-      if (saveHighlight) {
-        saveHighlight.disabled = !state.selectedText;
-      }
+      state.selectedText = getReaderSelectedText(reader);
+      previewNodes.forEach((preview) => {
+        preview.textContent = state.selectedText ? `已选中：${state.selectedText}` : "长按或拖动选中正文文字后，可保存为划线。";
+      });
+      saveHighlightButtons.forEach((button) => {
+        button.disabled = !state.selectedText;
+      });
     };
 
+    const scheduleSelectionUpdate = () => setTimeout(updateSelection, 80);
     reader.addEventListener("mouseup", updateSelection);
-    reader.addEventListener("touchend", () => setTimeout(updateSelection, 80), { passive: true });
+    reader.addEventListener("keyup", updateSelection);
+    reader.addEventListener("touchend", scheduleSelectionUpdate, { passive: true });
+    document.addEventListener("selectionchange", updateSelection);
+    cleanupTasks.push(() => reader.removeEventListener("mouseup", updateSelection));
+    cleanupTasks.push(() => reader.removeEventListener("keyup", updateSelection));
+    cleanupTasks.push(() => reader.removeEventListener("touchend", scheduleSelectionUpdate));
+    cleanupTasks.push(() => document.removeEventListener("selectionchange", updateSelection));
 
-    saveHighlight?.addEventListener("click", () => {
-      const text = state.selectedText.trim();
-      if (!text) return;
-      const annotations = getStoryAnnotations(story.id);
-      const exists = annotations.some((item) => item.text === text);
-      const next = exists
-        ? annotations
-        : [{ id: `ann-${Date.now()}`, text, color: "yellow", createdAt: new Date().toISOString() }, ...annotations];
-      saveStoryAnnotations(story.id, next);
-      const body = document.querySelector(".reader-body");
-      if (body) body.innerHTML = renderReaderBody(story, room.commentSummary);
-      if (annotationList) annotationList.innerHTML = renderAnnotationList(story.id);
-      window.getSelection()?.removeAllRanges();
-      state.selectedText = "";
-      updateSelection();
-      toast(exists ? "已存在划线" : "已保存划线", text);
+    saveHighlightButtons.forEach((button) => {
+      const onClick = () => {
+        const text = (state.selectedText || getReaderSelectedText(reader)).trim();
+        if (!text) {
+          toast("没有选中文字", "请先在正文里长按或拖动选中文字。");
+          updateSelection();
+          return;
+        }
+        const annotations = getStoryAnnotations(story.id);
+        const exists = annotations.some((item) => item.text === text);
+        const next = exists
+          ? annotations
+          : [{ id: `ann-${Date.now()}`, text, color: "yellow", createdAt: new Date().toISOString() }, ...annotations];
+        saveStoryAnnotations(story.id, next);
+        const body = document.querySelector(".reader-body");
+        if (body) body.innerHTML = renderReaderBody(story, room.commentSummary);
+        refreshReadingToolLists(story.id);
+        window.getSelection()?.removeAllRanges();
+        state.selectedText = "";
+        updateSelection();
+        toast(exists ? "已存在划线" : "已保存划线", text);
+      };
+      button.addEventListener("click", onClick);
+      cleanupTasks.push(() => button.removeEventListener("click", onClick));
     });
 
-    addBookmark?.addEventListener("click", () => {
-      const progress = getReaderViewportProgress(reader);
-      const label = window.prompt("给这个位置取个标签", `${progress.toFixed(1)}%`);
-      if (label === null) return;
-      const bookmarks = getStoryBookmarks(story.id);
-      const next = [{
-        id: `bookmark-${Date.now()}`,
-        label: label.trim().slice(0, 18) || `${progress.toFixed(1)}%`,
-        progress,
-        createdAt: new Date().toISOString()
-      }, ...bookmarks];
-    saveStoryBookmarks(story.id, next);
-      if (bookmarkList) bookmarkList.innerHTML = renderBookmarkList(story.id);
-      toast("已添加书签", `${progress.toFixed(1)}%`);
+    addBookmarkButtons.forEach((button) => {
+      const onClick = () => {
+        const progress = getReaderViewportProgress(reader);
+        const label = window.prompt("给这个位置取个标签", `${progress.toFixed(1)}%`);
+        if (label === null) return;
+        const bookmarks = getStoryBookmarks(story.id);
+        const next = [{
+          id: `bookmark-${Date.now()}`,
+          label: label.trim().slice(0, 18) || `${progress.toFixed(1)}%`,
+          progress,
+          createdAt: new Date().toISOString()
+        }, ...bookmarks];
+        saveStoryBookmarks(story.id, next);
+        refreshReadingToolLists(story.id);
+        toast("已添加书签", `${progress.toFixed(1)}%`);
+      };
+      button.addEventListener("click", onClick);
+      cleanupTasks.push(() => button.removeEventListener("click", onClick));
     });
 
-    bookmarkList?.addEventListener("click", (event) => {
+    const onBookmarkClick = (event) => {
       const button = event.target.closest("[data-bookmark-progress]");
       if (!button) return;
       const progress = Number(button.getAttribute("data-bookmark-progress"));
       scrollReaderToProgress(reader, progress, true);
+    };
+    document.querySelectorAll("[data-bookmark-list]").forEach((list) => {
+      list.addEventListener("click", onBookmarkClick);
+      cleanupTasks.push(() => list.removeEventListener("click", onBookmarkClick));
     });
+
+    syncControls();
+    updateSelection();
+    state.readingToolsCleanup = () => cleanupTasks.forEach((cleanup) => cleanup());
   }
 
   async function bindCommentTools(room) {
@@ -2976,6 +3103,7 @@
   function disconnectRealtime() {
     stopRelativeTimeTicker();
     cleanupReaderProgress();
+    cleanupReadingTools();
     if (state.eventSource) {
       state.eventSource.close();
       state.eventSource = null;

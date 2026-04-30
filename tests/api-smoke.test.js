@@ -87,6 +87,9 @@ async function main() {
   assert.ok(frontendSource.includes("chapter-select"), "create page should allow chapter selection");
   assert.ok(frontendSource.includes("getReaderViewportProgress"), "frontend should calculate progress from the active scroll source");
   assert.ok(frontendSource.includes('window.addEventListener("scroll", handleProgress'), "mobile page scrolling should report reading progress");
+  assert.ok(frontendSource.includes("reader-mobile-tools"), "mobile reader should expose reading tools near the text");
+  assert.ok(frontendSource.includes("selectionchange"), "mobile text selection should update highlight controls");
+  assert.ok(frontendSource.includes("data-reader-font-family"), "reader preferences should bind desktop and mobile controls");
 
   const resetStorePath = path.join(os.tmpdir(), `shared-reading-reset-${process.pid}.json`);
   fs.writeFileSync(resetStorePath, JSON.stringify({
