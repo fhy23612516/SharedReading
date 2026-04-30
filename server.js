@@ -1123,16 +1123,19 @@ function parseBody(req, options = {}) {
   });
 }
 
-function sanitizeStory(story) {
+function sanitizeStory(story, options = {}) {
+  const includeContent = options.includeContent !== false;
   if (!story) {
+    const fallbackBody = ["这个房间关联的阅读内容暂时找不到。"];
+    const fallbackText = fallbackBody.join("\n\n");
     return {
       id: "missing-story",
       title: "内容已不可用",
       author: "系统",
       cover: "缺失",
       summary: "这个房间关联的阅读内容暂时找不到。",
-      body: ["这个房间关联的阅读内容暂时找不到。"],
-      text: "这个房间关联的阅读内容暂时找不到。",
+      body: includeContent ? fallbackBody : [],
+      text: includeContent ? fallbackText : "",
       wordCount: 17,
       source: "missing",
       tags: [],
@@ -1146,8 +1149,8 @@ function sanitizeStory(story) {
     author: story.author,
     cover: story.cover,
     summary: story.summary,
-    body: story.body,
-    text: story.text,
+    body: includeContent ? story.body : [],
+    text: includeContent ? story.text : "",
     wordCount: story.wordCount,
     source: story.source || "builtin",
     tags: story.tags || [],
@@ -1160,6 +1163,10 @@ function sanitizeStory(story) {
     chapterIndex: Number.isInteger(story.chapterIndex) ? story.chapterIndex : null,
     chapterTitle: story.chapterTitle || ""
   };
+}
+
+function sanitizeStoryPreview(story) {
+  return sanitizeStory(story, { includeContent: false });
 }
 
 function normalizeBookText(text) {
@@ -1210,8 +1217,12 @@ function parseChapterStoryId(storyId) {
 
 function buildChapterStory(book, chapter) {
   if (!book || !chapter) return null;
-  const normalized = normalizeBookText(chapter.text || "");
+  const storedText = typeof chapter.text === "string" ? chapter.text : "";
+  const storedBody = Array.isArray(chapter.body) ? chapter.body : [];
+  const normalized = storedBody.length && storedText ? null : normalizeBookText(storedText || storedBody.join("\n\n"));
   const title = chapter.title || `第 ${Number(chapter.chapterIndex) + 1} 章`;
+  const body = storedBody.length ? storedBody : normalized.body;
+  const text = storedText || normalized.text;
   return {
     id: makeChapterStoryId(book.id, chapter.chapterIndex),
     ownerId: book.ownerId,
@@ -1219,9 +1230,9 @@ function buildChapterStory(book, chapter) {
     author: book.author,
     cover: title.slice(0, 6) || "章节",
     summary: `${book.title} / ${title}`,
-    body: chapter.body && chapter.body.length ? chapter.body : normalized.body,
-    text: chapter.text || normalized.text,
-    wordCount: Number(chapter.wordCount || normalized.wordCount),
+    body,
+    text,
+    wordCount: Number(chapter.wordCount || normalized?.wordCount || text.replace(/\s+/g, "").length),
     source: "imported",
     tags: book.tags || [],
     chaptered: false,
@@ -1312,7 +1323,7 @@ function searchStories(query, user = null) {
       const history = userId ? getReadingHistoryItems(userId).find((item) => item.storyId === story.id) || null : null;
       const inBookshelf = userId ? getBookshelfItems(userId).some((item) => item.storyId === story.id) : false;
       return {
-        ...sanitizeStory(story),
+        ...sanitizeStoryPreview(story),
         history,
         inBookshelf,
         commentSummary: getStoryCommentSummary(story.id)
@@ -1337,7 +1348,7 @@ function decorateStoryItem(storyId, userId) {
   if (!story) return null;
   const history = getReadingHistoryItems(userId).find((item) => item.storyId === storyId) || null;
   return {
-    story: sanitizeStory(story),
+    story: sanitizeStoryPreview(story),
     history,
     inBookshelf: getBookshelfItems(userId).some((item) => item.storyId === storyId),
     commentSummary: getStoryCommentSummary(storyId)
@@ -1630,7 +1641,7 @@ async function handleApi(req, res, url) {
     const user = getAuthenticatedUser(req);
     sendJson(res, 200, {
       stories: getVisibleStories(user).map((story) => ({
-        ...sanitizeStory(story),
+        ...sanitizeStoryPreview(story),
         commentSummary: getStoryCommentSummary(story.id)
       })),
       waitOptions: [5, 8, 12, 15],
@@ -1656,7 +1667,7 @@ async function handleApi(req, res, url) {
       sendJson(res, 401, { error: "unauthorized" });
       return true;
     }
-    const books = getImportedBooks().filter((book) => book.ownerId === user.id).map(sanitizeStory);
+    const books = getImportedBooks().filter((book) => book.ownerId === user.id).map(sanitizeStoryPreview);
     sendJson(res, 200, { books });
     return true;
   }
@@ -1680,7 +1691,7 @@ async function handleApi(req, res, url) {
       createdAt: chapter.createdAt,
       updatedAt: chapter.updatedAt
     }));
-    sendJson(res, 200, { book: sanitizeStory(book), chapters });
+    sendJson(res, 200, { book: sanitizeStoryPreview(book), chapters });
     return true;
   }
 
@@ -1718,7 +1729,7 @@ async function handleApi(req, res, url) {
     }
     const item = upsertBookshelf(user.id, story.id);
     persistState();
-    sendJson(res, 200, { item: { ...item, story: sanitizeStory(story) } });
+    sendJson(res, 200, { item: { ...item, story: sanitizeStoryPreview(story) } });
     return true;
   }
 
@@ -1774,7 +1785,7 @@ async function handleApi(req, res, url) {
     }
     const item = upsertReadingHistory(user.id, story.id, body.roomId, body.progress);
     persistState();
-    sendJson(res, 200, { item: { ...item, story: sanitizeStory(story) } });
+    sendJson(res, 200, { item: { ...item, story: sanitizeStoryPreview(story) } });
     return true;
   }
 
@@ -1824,7 +1835,7 @@ async function handleApi(req, res, url) {
     state.books = [book, ...getImportedBooks()].slice(0, 200);
     state.bookChapters = (state.bookChapters || []).filter((chapter) => chapter.bookId !== book.id);
     persistState();
-    sendJson(res, 201, { book: sanitizeStory(book) });
+    sendJson(res, 201, { book: sanitizeStoryPreview(book) });
     return true;
   }
 
@@ -1881,7 +1892,7 @@ async function handleApi(req, res, url) {
     book.chapterCount = Math.max(Number(book.chapterCount || 0), chapters.length);
     book.updatedAt = updatedAt;
     persistState();
-    sendJson(res, 201, { chapter: { ...chapter, storyId: makeChapterStoryId(book.id, chapter.chapterIndex) }, book: sanitizeStory(book) });
+    sendJson(res, 201, { chapter: { ...chapter, storyId: makeChapterStoryId(book.id, chapter.chapterIndex) }, book: sanitizeStoryPreview(book) });
     return true;
   }
 
@@ -1916,7 +1927,7 @@ async function handleApi(req, res, url) {
     book.updatedAt = now();
     persistState();
     sendJson(res, 200, {
-      book: sanitizeStory(book),
+      book: sanitizeStoryPreview(book),
       chapters: chapters.map((chapter) => ({
         id: chapter.id,
         storyId: makeChapterStoryId(book.id, chapter.chapterIndex),
@@ -1978,7 +1989,7 @@ async function handleApi(req, res, url) {
     };
     state.books = [book, ...getImportedBooks()].slice(0, 200);
     persistState();
-    sendJson(res, 201, { book: sanitizeStory(book) });
+    sendJson(res, 201, { book: sanitizeStoryPreview(book) });
     return true;
   }
 
@@ -2463,8 +2474,14 @@ async function handleApi(req, res, url) {
   if (req.method === "POST" && action === "presence") {
     member.lastSeenAt = now();
     member.online = true;
+    room.updatedAt = now();
     persistState();
-    sendJson(res, 200, { room: normalizeRoom(room) });
+    sendJson(res, 200, {
+      ok: true,
+      member,
+      waitState: computeWaitState(room),
+      updatedAt: room.updatedAt
+    });
     return true;
   }
 

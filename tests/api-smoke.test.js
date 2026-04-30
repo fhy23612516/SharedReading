@@ -85,6 +85,8 @@ async function main() {
   assert.ok(frontendSource.includes("import-preview"), "import page should include local preview panel");
   assert.ok(frontendSource.includes("/api/books/import/start"), "frontend should support chaptered import");
   assert.ok(frontendSource.includes("chapter-select"), "create page should allow chapter selection");
+  assert.ok(frontendSource.includes("getReaderViewportProgress"), "frontend should calculate progress from the active scroll source");
+  assert.ok(frontendSource.includes('window.addEventListener("scroll", handleProgress'), "mobile page scrolling should report reading progress");
 
   const resetStorePath = path.join(os.tmpdir(), `shared-reading-reset-${process.pid}.json`);
   fs.writeFileSync(resetStorePath, JSON.stringify({
@@ -117,6 +119,8 @@ async function main() {
   await listen();
   const bootstrap = await waitForServer();
   assert.ok(bootstrap.stories.length >= 1, "bootstrap should return stories");
+  assert.equal(bootstrap.stories[0].text, "", "bootstrap should not include full story text");
+  assert.deepEqual(bootstrap.stories[0].body, [], "bootstrap should not include full story body");
   assert.ok(
     bootstrap.stories.some((story) => story.source === "public-domain" && story.sourceUrl && story.licenseNote),
     "bootstrap should include public domain source metadata"
@@ -180,18 +184,22 @@ async function main() {
     text: "第一段用于测试导入书籍功能，内容需要足够长。\n\n第二段用于确认后端可以拆分段落，并在创建房间时使用导入内容。"
   }, authHeaders);
   assert.ok(imported.book.id, "imported book should have an id");
+  assert.equal(imported.book.text, "", "import response should omit full text");
 
   const bootWithBook = await request("/api/bootstrap", "GET", null, authHeaders);
   assert.ok(bootWithBook.stories.some((story) => story.id === imported.book.id), "bootstrap should include my imported book");
+  assert.ok(bootWithBook.stories.every((story) => story.text === "" && Array.isArray(story.body) && story.body.length === 0), "bootstrap story list should stay lightweight");
 
   const importedRoom = await request("/api/rooms", "POST", {
     storyId: imported.book.id,
     threshold: 8
   }, authHeaders);
   assert.equal(importedRoom.room.story.id, imported.book.id, "room can use imported book");
+  assert.ok(importedRoom.room.story.text.length > 0, "room detail should include readable story text");
 
   const search = await request(`/api/search?q=${encodeURIComponent("Imported")}`, "GET", null, authHeaders);
   assert.ok(search.items.some((story) => story.id === imported.book.id), "search should find imported book");
+  assert.ok(search.items.every((story) => story.text === "" && Array.isArray(story.body) && story.body.length === 0), "search results should stay lightweight");
 
   await request("/api/bookshelf", "POST", { storyId: imported.book.id }, authHeaders);
   const bookshelf = await request("/api/bookshelf", "GET", null, authHeaders);
@@ -247,6 +255,13 @@ async function main() {
     name: alice.name,
     progress: 31.2
   });
+
+  const presence = await request(`/api/rooms/${created.room.id}/presence`, "POST", {
+    userId: alice.id,
+    name: alice.name
+  });
+  assert.equal(presence.ok, true, "presence should return a lightweight heartbeat response");
+  assert.equal(presence.room, undefined, "presence should not return full room/story content");
 
   const firstMessage = await request(`/api/rooms/${created.room.id}/messages`, "POST", {
     userId: alice.id,

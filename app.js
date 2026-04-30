@@ -38,6 +38,7 @@
     progressInFlight: false,
     queuedProgressValue: null,
     lastProgressSentAt: 0,
+    readerProgressCleanup: null,
     lastMessageAt: 0,
     lastRoomSnapshot: null,
     liveFeedTimers: [],
@@ -2412,27 +2413,87 @@
     }
   }
 
+  function clampReaderProgress(value) {
+    const next = Number(value);
+    return Math.max(0, Math.min(100, Number.isFinite(next) ? next : 0));
+  }
+
+  function getReaderScrollContext(reader) {
+    const internalMax = Math.max(0, reader.scrollHeight - reader.clientHeight);
+    if (internalMax > 8) {
+      return {
+        mode: "element",
+        max: internalMax,
+        current: reader.scrollTop,
+        targetTop: (ratio) => ratio * internalMax
+      };
+    }
+
+    const pageY = window.scrollY || window.pageYOffset || document.documentElement.scrollTop || 0;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 1;
+    const rect = reader.getBoundingClientRect();
+    const documentTop = pageY + rect.top;
+    const height = Math.max(reader.scrollHeight, reader.offsetHeight, rect.height);
+    const max = Math.max(1, height - viewportHeight);
+    return {
+      mode: "page",
+      max,
+      current: pageY - documentTop,
+      targetTop: (ratio) => documentTop + ratio * max
+    };
+  }
+
+  function getReaderViewportProgress(reader) {
+    const context = getReaderScrollContext(reader);
+    return clampReaderProgress((Math.max(0, context.current) / Math.max(1, context.max)) * 100);
+  }
+
+  function scrollReaderToProgress(reader, progress, smooth = false) {
+    const ratio = clampReaderProgress(progress) / 100;
+    const context = getReaderScrollContext(reader);
+    const top = Math.max(0, context.targetTop(ratio));
+    if (context.mode === "element") {
+      if (typeof reader.scrollTo === "function") {
+        reader.scrollTo({ top, behavior: smooth ? "smooth" : "auto" });
+      } else {
+        reader.scrollTop = top;
+      }
+      return;
+    }
+
+    try {
+      window.scrollTo({ top, behavior: smooth ? "smooth" : "auto" });
+    } catch {
+      window.scrollTo(0, top);
+    }
+  }
+
+  function cleanupReaderProgress() {
+    if (state.readerProgressCleanup) {
+      state.readerProgressCleanup();
+      state.readerProgressCleanup = null;
+    }
+  }
+
   function bindReader(room) {
     const reader = document.getElementById("reader-scroll");
+    if (!reader) return;
+    cleanupReaderProgress();
     const myProgress = getMyProgress(room);
-    const ratio = Math.max(0, Math.min(1, (myProgress.maxProgress || 0) / 100));
-    const maxScroll = Math.max(0, reader.scrollHeight - reader.clientHeight);
-    reader.scrollTop = ratio * maxScroll;
     applyReadingPrefs();
+    scrollReaderToProgress(reader, myProgress.maxProgress || 0);
 
     let pending = false;
     let lastSent = myProgress.maxProgress || 0;
 
-    reader.addEventListener("scroll", () => {
+    const handleProgress = () => {
       if (pending) return;
       pending = true;
       requestAnimationFrame(() => {
         pending = false;
         const currentRoom = state.room;
         if (!currentRoom) return;
-        const scrollMax = Math.max(1, reader.scrollHeight - reader.clientHeight);
-        const raw = (reader.scrollTop / scrollMax) * 100;
-        const target = Math.max(0, Math.min(100, raw));
+        const target = getReaderViewportProgress(reader);
         const reported = Math.max(getMyProgress(currentRoom).maxProgress, target);
 
         if (reported <= getMyProgress(currentRoom).maxProgress + 0.1) return;
@@ -2445,7 +2506,18 @@
         patchRoomDom(currentRoom, optimisticPrev);
         queueProgressFlush(currentRoom.id, lastSent);
       });
-    }, { passive: true });
+    };
+
+    reader.addEventListener("scroll", handleProgress, { passive: true });
+    window.addEventListener("scroll", handleProgress, { passive: true });
+    window.addEventListener("resize", handleProgress, { passive: true });
+    reader.addEventListener("touchend", handleProgress, { passive: true });
+    state.readerProgressCleanup = () => {
+      reader.removeEventListener("scroll", handleProgress);
+      window.removeEventListener("scroll", handleProgress);
+      window.removeEventListener("resize", handleProgress);
+      reader.removeEventListener("touchend", handleProgress);
+    };
   }
 
   function bindReadingTools(room) {
@@ -2519,8 +2591,7 @@
     });
 
     addBookmark?.addEventListener("click", () => {
-      const maxScroll = Math.max(1, reader.scrollHeight - reader.clientHeight);
-      const progress = Math.max(0, Math.min(100, (reader.scrollTop / maxScroll) * 100));
+      const progress = getReaderViewportProgress(reader);
       const label = window.prompt("给这个位置取个标签", `${progress.toFixed(1)}%`);
       if (label === null) return;
       const bookmarks = getStoryBookmarks(story.id);
@@ -2539,8 +2610,7 @@
       const button = event.target.closest("[data-bookmark-progress]");
       if (!button) return;
       const progress = Number(button.getAttribute("data-bookmark-progress"));
-      const maxScroll = Math.max(0, reader.scrollHeight - reader.clientHeight);
-      reader.scrollTo({ top: (Math.max(0, Math.min(100, progress)) / 100) * maxScroll, behavior: "smooth" });
+      scrollReaderToProgress(reader, progress, true);
     });
   }
 
@@ -2905,6 +2975,7 @@
 
   function disconnectRealtime() {
     stopRelativeTimeTicker();
+    cleanupReaderProgress();
     if (state.eventSource) {
       state.eventSource.close();
       state.eventSource = null;
