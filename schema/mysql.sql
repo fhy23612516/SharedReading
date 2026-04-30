@@ -54,9 +54,74 @@ CREATE TABLE IF NOT EXISTS books (
   text_content MEDIUMTEXT NOT NULL,
   word_count INT NOT NULL,
   tags_json JSON NULL,
+  chaptered TINYINT(1) NOT NULL DEFAULT 0,
+  chapter_count INT NOT NULL DEFAULT 0,
+  import_status VARCHAR(20) NOT NULL DEFAULT 'done',
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
   INDEX idx_books_owner_created (owner_id, created_at)
+);
+
+SET @has_books_chaptered := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'books'
+    AND COLUMN_NAME = 'chaptered'
+);
+SET @add_books_chaptered := IF(
+  @has_books_chaptered = 0,
+  'ALTER TABLE books ADD COLUMN chaptered TINYINT(1) NOT NULL DEFAULT 0 AFTER tags_json',
+  'SELECT 1'
+);
+PREPARE add_books_chaptered_stmt FROM @add_books_chaptered;
+EXECUTE add_books_chaptered_stmt;
+DEALLOCATE PREPARE add_books_chaptered_stmt;
+
+SET @has_books_chapter_count := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'books'
+    AND COLUMN_NAME = 'chapter_count'
+);
+SET @add_books_chapter_count := IF(
+  @has_books_chapter_count = 0,
+  'ALTER TABLE books ADD COLUMN chapter_count INT NOT NULL DEFAULT 0 AFTER chaptered',
+  'SELECT 1'
+);
+PREPARE add_books_chapter_count_stmt FROM @add_books_chapter_count;
+EXECUTE add_books_chapter_count_stmt;
+DEALLOCATE PREPARE add_books_chapter_count_stmt;
+
+SET @has_books_import_status := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'books'
+    AND COLUMN_NAME = 'import_status'
+);
+SET @add_books_import_status := IF(
+  @has_books_import_status = 0,
+  'ALTER TABLE books ADD COLUMN import_status VARCHAR(20) NOT NULL DEFAULT ''done'' AFTER chapter_count',
+  'SELECT 1'
+);
+PREPARE add_books_import_status_stmt FROM @add_books_import_status;
+EXECUTE add_books_import_status_stmt;
+DEALLOCATE PREPARE add_books_import_status_stmt;
+
+CREATE TABLE IF NOT EXISTS book_chapters (
+  id VARCHAR(40) PRIMARY KEY,
+  book_id VARCHAR(40) NOT NULL,
+  chapter_index INT NOT NULL,
+  title VARCHAR(160) NOT NULL,
+  content MEDIUMTEXT NOT NULL,
+  body_json JSON NOT NULL,
+  word_count INT NOT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  UNIQUE KEY uniq_book_chapter_index (book_id, chapter_index),
+  INDEX idx_book_chapters_book_index (book_id, chapter_index)
 );
 
 CREATE TABLE IF NOT EXISTS story_comments (

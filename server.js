@@ -15,6 +15,9 @@ const DEFAULT_BODY_LIMIT = 1_000_000;
 const BOOK_IMPORT_BODY_LIMIT = 2_500_000;
 const BOOK_IMPORT_TEXT_LIMIT = 500_000;
 const BOOK_IMPORT_MIN_WORDS = 30;
+const BOOK_CHAPTER_BODY_LIMIT = 1_500_000;
+const BOOK_CHAPTER_TEXT_LIMIT = 120_000;
+const BOOK_CHAPTER_MAX_COUNT = 1000;
 
 let state = STORAGE_DRIVER === "mysql" ? emptyState() : readState();
 const builtInStoryMap = new Map(stories.map((story) => [story.id, story]));
@@ -34,6 +37,7 @@ function emptyState() {
     authSessions: {},
     feedback: [],
     books: [],
+    bookChapters: [],
     comments: [],
     bookshelf: [],
     readingHistory: []
@@ -51,6 +55,7 @@ function readState() {
       authSessions: parsed.authSessions || {},
       feedback: parsed.feedback || [],
       books: Array.isArray(parsed.books) ? parsed.books : [],
+      bookChapters: Array.isArray(parsed.bookChapters) ? parsed.bookChapters : [],
       comments: Array.isArray(parsed.comments) ? parsed.comments : [],
       bookshelf: Array.isArray(parsed.bookshelf) ? parsed.bookshelf : [],
       readingHistory: Array.isArray(parsed.readingHistory) ? parsed.readingHistory : []
@@ -152,9 +157,25 @@ async function ensureMysqlSchema() {
       text_content MEDIUMTEXT NOT NULL,
       word_count INT NOT NULL,
       tags_json JSON NULL,
+      chaptered TINYINT(1) NOT NULL DEFAULT 0,
+      chapter_count INT NOT NULL DEFAULT 0,
+      import_status VARCHAR(20) NOT NULL DEFAULT 'done',
       created_at DATETIME NOT NULL,
       updated_at DATETIME NOT NULL,
       INDEX idx_books_owner_created (owner_id, created_at)
+    )`,
+    `CREATE TABLE IF NOT EXISTS book_chapters (
+      id VARCHAR(40) PRIMARY KEY,
+      book_id VARCHAR(40) NOT NULL,
+      chapter_index INT NOT NULL,
+      title VARCHAR(160) NOT NULL,
+      content MEDIUMTEXT NOT NULL,
+      body_json JSON NOT NULL,
+      word_count INT NOT NULL,
+      created_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL,
+      UNIQUE KEY uniq_book_chapter_index (book_id, chapter_index),
+      INDEX idx_book_chapters_book_index (book_id, chapter_index)
     )`,
     `CREATE TABLE IF NOT EXISTS story_comments (
       id VARCHAR(40) PRIMARY KEY,
@@ -287,6 +308,24 @@ async function ensureMysqlSchema() {
     "password_recovery_hash",
     "ALTER TABLE users ADD COLUMN password_recovery_hash VARCHAR(128) NULL AFTER password_hash"
   );
+  await ensureMysqlColumn(
+    pool,
+    "books",
+    "chaptered",
+    "ALTER TABLE books ADD COLUMN chaptered TINYINT(1) NOT NULL DEFAULT 0 AFTER tags_json"
+  );
+  await ensureMysqlColumn(
+    pool,
+    "books",
+    "chapter_count",
+    "ALTER TABLE books ADD COLUMN chapter_count INT NOT NULL DEFAULT 0 AFTER chaptered"
+  );
+  await ensureMysqlColumn(
+    pool,
+    "books",
+    "import_status",
+    "ALTER TABLE books ADD COLUMN import_status VARCHAR(20) NOT NULL DEFAULT 'done' AFTER chapter_count"
+  );
 }
 
 async function ensureMysqlColumn(pool, tableName, columnName, alterSql) {
@@ -318,7 +357,8 @@ async function readMysqlState() {
     [feedbackRows],
     [commentRows],
     [bookshelfRows],
-    [historyRows]
+    [historyRows],
+    [chapterRows]
   ] = await Promise.all([
     pool.query("SELECT * FROM users"),
     pool.query("SELECT * FROM auth_sessions"),
@@ -332,7 +372,8 @@ async function readMysqlState() {
     pool.query("SELECT * FROM feedback ORDER BY created_at DESC"),
     pool.query("SELECT * FROM story_comments ORDER BY created_at ASC"),
     pool.query("SELECT * FROM bookshelf_items ORDER BY updated_at DESC"),
-    pool.query("SELECT * FROM reading_history ORDER BY last_read_at DESC")
+    pool.query("SELECT * FROM reading_history ORDER BY last_read_at DESC"),
+    pool.query("SELECT * FROM book_chapters ORDER BY book_id ASC, chapter_index ASC")
   ]);
 
   const next = emptyState();
@@ -387,7 +428,31 @@ async function readMysqlState() {
       text,
       wordCount: Number(row.word_count || text.replace(/\s+/g, "").length),
       tags,
+      chaptered: Boolean(row.chaptered),
+      chapterCount: Number(row.chapter_count || 0),
+      importStatus: row.import_status || "done",
       source: "imported",
+      createdAt: toIso(row.created_at) || now(),
+      updatedAt: toIso(row.updated_at) || now()
+    };
+  });
+
+  next.bookChapters = chapterRows.map((row) => {
+    let body = [];
+    try {
+      body = Array.isArray(row.body_json) ? row.body_json : JSON.parse(row.body_json || "[]");
+    } catch {
+      body = [];
+    }
+    const text = row.content || body.join("\n\n");
+    return {
+      id: row.id,
+      bookId: row.book_id,
+      chapterIndex: Number(row.chapter_index),
+      title: row.title || `第 ${Number(row.chapter_index) + 1} 章`,
+      body,
+      text,
+      wordCount: Number(row.word_count || text.replace(/\s+/g, "").length),
       createdAt: toIso(row.created_at) || now(),
       updatedAt: toIso(row.updated_at) || now()
     };
@@ -535,6 +600,7 @@ async function saveMysqlState() {
     await connection.query("DELETE FROM bookshelf_items");
     await connection.query("DELETE FROM reading_history");
     await connection.query("DELETE FROM auth_sessions");
+    await connection.query("DELETE FROM book_chapters");
     await connection.query("DELETE FROM books");
     await connection.query("DELETE FROM rooms");
     await connection.query("DELETE FROM users");
@@ -578,8 +644,8 @@ async function saveMysqlState() {
       const text = book.text || body.join("\n\n");
       await connection.query(
         `INSERT INTO books
-          (id, owner_id, title, author, cover, summary, body_json, text_content, word_count, tags_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, owner_id, title, author, cover, summary, body_json, text_content, word_count, tags_json, chaptered, chapter_count, import_status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           book.id,
           book.ownerId || null,
@@ -591,8 +657,32 @@ async function saveMysqlState() {
           text,
           Number(book.wordCount || text.replace(/\s+/g, "").length),
           JSON.stringify(book.tags || []),
+          book.chaptered ? 1 : 0,
+          Number(book.chapterCount || 0),
+          book.importStatus || "done",
           toMysqlDate(book.createdAt) || toMysqlDate(now()),
           toMysqlDate(book.updatedAt) || toMysqlDate(now())
+        ]
+      );
+    }
+
+    for (const chapter of state.bookChapters || []) {
+      const body = Array.isArray(chapter.body) ? chapter.body : normalizeBookText(chapter.text || "").body;
+      const text = chapter.text || body.join("\n\n");
+      await connection.query(
+        `INSERT INTO book_chapters
+          (id, book_id, chapter_index, title, content, body_json, word_count, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          chapter.id,
+          chapter.bookId,
+          Number(chapter.chapterIndex),
+          chapter.title || `第 ${Number(chapter.chapterIndex) + 1} 章`,
+          text,
+          JSON.stringify(body),
+          Number(chapter.wordCount || text.replace(/\s+/g, "").length),
+          toMysqlDate(chapter.createdAt) || toMysqlDate(now()),
+          toMysqlDate(chapter.updatedAt) || toMysqlDate(now())
         ]
       );
     }
@@ -1045,7 +1135,9 @@ function sanitizeStory(story) {
       text: "这个房间关联的阅读内容暂时找不到。",
       wordCount: 17,
       source: "missing",
-      tags: []
+      tags: [],
+      chaptered: false,
+      chapterCount: 0
     };
   }
   return {
@@ -1060,7 +1152,13 @@ function sanitizeStory(story) {
     source: story.source || "builtin",
     tags: story.tags || [],
     sourceUrl: story.sourceUrl || "",
-    licenseNote: story.licenseNote || ""
+    licenseNote: story.licenseNote || "",
+    chaptered: Boolean(story.chaptered),
+    chapterCount: Number(story.chapterCount || 0),
+    importStatus: story.importStatus || "",
+    parentBookId: story.parentBookId || "",
+    chapterIndex: Number.isInteger(story.chapterIndex) ? story.chapterIndex : null,
+    chapterTitle: story.chapterTitle || ""
   };
 }
 
@@ -1087,6 +1185,64 @@ function getImportedBooks() {
   return Array.isArray(state.books) ? state.books : [];
 }
 
+function getImportedChapters() {
+  return Array.isArray(state.bookChapters) ? state.bookChapters : [];
+}
+
+function getBookChapters(bookId) {
+  return getImportedChapters()
+    .filter((chapter) => chapter.bookId === bookId)
+    .sort((a, b) => Number(a.chapterIndex) - Number(b.chapterIndex));
+}
+
+function makeChapterStoryId(bookId, chapterIndex) {
+  return `${bookId}::chapter-${Number(chapterIndex)}`;
+}
+
+function parseChapterStoryId(storyId) {
+  const match = String(storyId || "").match(/^(.+)::chapter-(\d+)$/);
+  if (!match) return null;
+  return {
+    bookId: match[1],
+    chapterIndex: Number(match[2])
+  };
+}
+
+function buildChapterStory(book, chapter) {
+  if (!book || !chapter) return null;
+  const normalized = normalizeBookText(chapter.text || "");
+  const title = chapter.title || `第 ${Number(chapter.chapterIndex) + 1} 章`;
+  return {
+    id: makeChapterStoryId(book.id, chapter.chapterIndex),
+    ownerId: book.ownerId,
+    title: `${book.title}：${title}`,
+    author: book.author,
+    cover: title.slice(0, 6) || "章节",
+    summary: `${book.title} / ${title}`,
+    body: chapter.body && chapter.body.length ? chapter.body : normalized.body,
+    text: chapter.text || normalized.text,
+    wordCount: Number(chapter.wordCount || normalized.wordCount),
+    source: "imported",
+    tags: book.tags || [],
+    chaptered: false,
+    chapterCount: Number(book.chapterCount || getBookChapters(book.id).length),
+    parentBookId: book.id,
+    chapterIndex: Number(chapter.chapterIndex),
+    chapterTitle: title,
+    createdAt: chapter.createdAt,
+    updatedAt: chapter.updatedAt
+  };
+}
+
+function getChapterStoryById(storyId, user = null) {
+  const parsed = parseChapterStoryId(storyId);
+  if (!parsed) return null;
+  const book = getImportedBooks().find((item) => item.id === parsed.bookId && (!user || !item.ownerId || item.ownerId === user.id));
+  if (!book) return null;
+  const chapter = getBookChapters(book.id).find((item) => Number(item.chapterIndex) === parsed.chapterIndex);
+  return buildChapterStory(book, chapter);
+}
+
 function getVisibleStories(user = null) {
   const imported = getImportedBooks().filter((book) => !book.ownerId || user?.id === book.ownerId);
   return [...stories, ...imported];
@@ -1094,11 +1250,26 @@ function getVisibleStories(user = null) {
 
 function getStoryById(storyId, user = null) {
   if (builtInStoryMap.has(storyId)) return builtInStoryMap.get(storyId);
-  return getImportedBooks().find((book) => book.id === storyId && (!user || !book.ownerId || book.ownerId === user.id));
+  const chapterStory = getChapterStoryById(storyId, user);
+  if (chapterStory) return chapterStory;
+  const book = getImportedBooks().find((item) => item.id === storyId && (!user || !item.ownerId || item.ownerId === user.id));
+  if (book?.chaptered) {
+    const firstChapter = getBookChapters(book.id)[0];
+    return buildChapterStory(book, firstChapter) || book;
+  }
+  return book;
 }
 
 function getStoryForPublicUse(storyId) {
-  return builtInStoryMap.get(storyId) || getImportedBooks().find((book) => book.id === storyId) || null;
+  if (builtInStoryMap.has(storyId)) return builtInStoryMap.get(storyId);
+  const chapterStory = getChapterStoryById(storyId);
+  if (chapterStory) return chapterStory;
+  const book = getImportedBooks().find((item) => item.id === storyId) || null;
+  if (book?.chaptered) {
+    const firstChapter = getBookChapters(book.id)[0];
+    return buildChapterStory(book, firstChapter) || book;
+  }
+  return book;
 }
 
 function getStoryCommentSummary(storyId) {
@@ -1490,6 +1661,29 @@ async function handleApi(req, res, url) {
     return true;
   }
 
+  const chaptersMatch = url.pathname.match(/^\/api\/books\/([^/]+)\/chapters$/);
+  if (chaptersMatch && req.method === "GET") {
+    const user = getAuthenticatedUser(req);
+    const bookId = decodeURIComponent(chaptersMatch[1]);
+    const book = getImportedBooks().find((item) => item.id === bookId && (!item.ownerId || user?.id === item.ownerId));
+    if (!book || !book.chaptered) {
+      sendJson(res, 404, { error: "book_not_found" });
+      return true;
+    }
+    const chapters = getBookChapters(book.id).map((chapter) => ({
+      id: chapter.id,
+      bookId: book.id,
+      storyId: makeChapterStoryId(book.id, chapter.chapterIndex),
+      chapterIndex: chapter.chapterIndex,
+      title: chapter.title,
+      wordCount: chapter.wordCount,
+      createdAt: chapter.createdAt,
+      updatedAt: chapter.updatedAt
+    }));
+    sendJson(res, 200, { book: sanitizeStory(book), chapters });
+    return true;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/bookshelf") {
     const user = getAuthenticatedUser(req);
     if (!user) {
@@ -1581,6 +1775,156 @@ async function handleApi(req, res, url) {
     const item = upsertReadingHistory(user.id, story.id, body.roomId, body.progress);
     persistState();
     sendJson(res, 200, { item: { ...item, story: sanitizeStory(story) } });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/books/import/start") {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return true;
+    }
+    const body = await parseBody(req).catch((error) => ({ __error: error.message }));
+    if (body.__error) {
+      sendJson(res, 400, { error: body.__error });
+      return true;
+    }
+    const title = String(body.title || "").trim().slice(0, 80);
+    const author = String(body.author || "用户导入").trim().slice(0, 40) || "用户导入";
+    const summaryInput = String(body.summary || "").trim().slice(0, 160);
+    const tags = String(body.tags || "")
+      .split(/[,，\s]+/)
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+      .slice(0, 8);
+    const totalChapters = Math.max(1, Math.min(BOOK_CHAPTER_MAX_COUNT, Number(body.totalChapters || 1)));
+    if (title.length < 1) {
+      sendJson(res, 400, { error: "book_title_required" });
+      return true;
+    }
+    const createdAt = now();
+    const book = {
+      id: uid("book"),
+      ownerId: user.id,
+      title,
+      author,
+      cover: "分章导入",
+      summary: summaryInput || `分章导入中，共 ${totalChapters} 章。`,
+      body: [`${title} 正在分章导入，完成后可选择章节创建共读房间。`],
+      text: `${title} 正在分章导入。`,
+      wordCount: 0,
+      tags,
+      source: "imported",
+      chaptered: true,
+      chapterCount: totalChapters,
+      importStatus: "importing",
+      createdAt,
+      updatedAt: createdAt
+    };
+    state.books = [book, ...getImportedBooks()].slice(0, 200);
+    state.bookChapters = (state.bookChapters || []).filter((chapter) => chapter.bookId !== book.id);
+    persistState();
+    sendJson(res, 201, { book: sanitizeStory(book) });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/books/import/chapter") {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return true;
+    }
+    const body = await parseBody(req, { maxLength: BOOK_CHAPTER_BODY_LIMIT }).catch((error) => ({ __error: error.message }));
+    if (body.__error) {
+      sendJson(res, 400, { error: body.__error });
+      return true;
+    }
+    const book = getImportedBooks().find((item) => item.id === String(body.bookId || "") && item.ownerId === user.id);
+    if (!book || !book.chaptered) {
+      sendJson(res, 404, { error: "book_not_found" });
+      return true;
+    }
+    const chapterIndex = Number(body.chapterIndex);
+    const chapterTitle = String(body.title || `第 ${chapterIndex + 1} 章`).trim().slice(0, 120);
+    const normalized = normalizeBookText(body.text || body.content || "");
+    if (!Number.isInteger(chapterIndex) || chapterIndex < 0 || chapterIndex >= BOOK_CHAPTER_MAX_COUNT) {
+      sendJson(res, 400, { error: "invalid_chapter_index" });
+      return true;
+    }
+    if (normalized.wordCount < BOOK_IMPORT_MIN_WORDS) {
+      sendJson(res, 400, { error: "book_content_too_short" });
+      return true;
+    }
+    if (normalized.text.length > BOOK_CHAPTER_TEXT_LIMIT) {
+      sendJson(res, 400, { error: "book_chapter_too_long" });
+      return true;
+    }
+    const existing = getImportedChapters().find((chapter) => chapter.bookId === book.id && Number(chapter.chapterIndex) === chapterIndex);
+    const updatedAt = now();
+    const chapter = {
+      id: existing?.id || uid("chapter"),
+      bookId: book.id,
+      chapterIndex,
+      title: chapterTitle || `第 ${chapterIndex + 1} 章`,
+      body: normalized.body,
+      text: normalized.text,
+      wordCount: normalized.wordCount,
+      createdAt: existing?.createdAt || updatedAt,
+      updatedAt
+    };
+    state.bookChapters = [
+      ...(state.bookChapters || []).filter((item) => !(item.bookId === book.id && Number(item.chapterIndex) === chapterIndex)),
+      chapter
+    ].sort((a, b) => a.bookId.localeCompare(b.bookId) || Number(a.chapterIndex) - Number(b.chapterIndex));
+    const chapters = getBookChapters(book.id);
+    book.wordCount = chapters.reduce((sum, item) => sum + Number(item.wordCount || 0), 0);
+    book.chapterCount = Math.max(Number(book.chapterCount || 0), chapters.length);
+    book.updatedAt = updatedAt;
+    persistState();
+    sendJson(res, 201, { chapter: { ...chapter, storyId: makeChapterStoryId(book.id, chapter.chapterIndex) }, book: sanitizeStory(book) });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/books/import/finish") {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return true;
+    }
+    const body = await parseBody(req).catch((error) => ({ __error: error.message }));
+    if (body.__error) {
+      sendJson(res, 400, { error: body.__error });
+      return true;
+    }
+    const book = getImportedBooks().find((item) => item.id === String(body.bookId || "") && item.ownerId === user.id);
+    if (!book || !book.chaptered) {
+      sendJson(res, 404, { error: "book_not_found" });
+      return true;
+    }
+    const chapters = getBookChapters(book.id);
+    if (!chapters.length) {
+      sendJson(res, 400, { error: "book_content_too_short" });
+      return true;
+    }
+    book.wordCount = chapters.reduce((sum, chapter) => sum + Number(chapter.wordCount || 0), 0);
+    book.chapterCount = chapters.length;
+    book.importStatus = "done";
+    const firstChapter = chapters[0];
+    book.body = [`已分章导入 ${chapters.length} 章。创建房间时请选择具体章节。`];
+    book.text = book.body.join("\n\n");
+    book.summary = String(body.summary || book.summary || firstChapter.text.slice(0, 90)).trim().slice(0, 160);
+    book.updatedAt = now();
+    persistState();
+    sendJson(res, 200, {
+      book: sanitizeStory(book),
+      chapters: chapters.map((chapter) => ({
+        id: chapter.id,
+        storyId: makeChapterStoryId(book.id, chapter.chapterIndex),
+        chapterIndex: chapter.chapterIndex,
+        title: chapter.title,
+        wordCount: chapter.wordCount
+      }))
+    });
     return true;
   }
 

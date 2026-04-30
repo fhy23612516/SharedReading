@@ -19,6 +19,10 @@
   const IMPORT_MIN_WORDS = 30;
   const IMPORT_MAX_TEXT_LENGTH = 500_000;
   const IMPORT_MAX_REQUEST_BYTES = 2_500_000;
+  const IMPORT_LARGE_TEXT_LENGTH = 5_000_000;
+  const IMPORT_CHAPTER_TEXT_LENGTH = 80_000;
+  const IMPORT_CHAPTER_MAX_TEXT_LENGTH = 120_000;
+  const IMPORT_CHAPTER_MAX_COUNT = 1000;
 
   const state = {
     user: null,
@@ -787,7 +791,7 @@
         <div class="library-card-body">
           <div class="tag">${escapeHtml(getStorySourceLabel(story))}</div>
           <h3>${escapeHtml(story.title)}</h3>
-          <div class="story-meta">${escapeHtml(story.author || "未知作者")} · ${Number(story.wordCount || 0)} 字</div>
+          <div class="story-meta">${escapeHtml(story.author || "未知作者")} · ${Number(story.wordCount || 0)} 字${story.chaptered ? ` · ${Number(story.chapterCount || 0)} 章` : ""}</div>
           <p>${escapeHtml(story.summary || "")}</p>
           ${history ? `<p class="record-meta">上次读到 ${Number(history.progress || 0).toFixed(1)}% · ${formatRelativeTime(history.lastReadAt)}</p>` : ""}
           ${story.licenseNote ? `<p class="record-meta">${escapeHtml(story.licenseNote)}</p>` : ""}
@@ -839,7 +843,7 @@
         <div class="book-tile-body">
           <div class="tag">${escapeHtml(getStorySourceLabel(story))}</div>
           <h3>${escapeHtml(story.title)}</h3>
-          <div class="story-meta">${escapeHtml(story.author)} · ${story.wordCount} 字</div>
+          <div class="story-meta">${escapeHtml(story.author)} · ${story.wordCount} 字${story.chaptered ? ` · ${Number(story.chapterCount || 0)} 章` : ""}</div>
           <p>${escapeHtml(story.summary)}</p>
           ${story.licenseNote ? `<p class="record-meta">${escapeHtml(story.licenseNote)}</p>` : ""}
         </div>
@@ -1360,8 +1364,10 @@
     const warnings = [];
     if (replacementCount > 0) warnings.push("检测到乱码替换符，建议切换编码后重新读取。");
     if (wordCount > 0 && wordCount < IMPORT_MIN_WORDS) warnings.push(`正文至少需要 ${IMPORT_MIN_WORDS} 个字。`);
-    if (normalized.length > IMPORT_MAX_TEXT_LENGTH) warnings.push("正文超过当前单本上限，需要拆分后导入。");
-    if (requestBytes > IMPORT_MAX_REQUEST_BYTES) warnings.push("提交体积过大，建议减少正文长度或分章节导入。");
+    if (normalized.length > IMPORT_MAX_TEXT_LENGTH || requestBytes > IMPORT_MAX_REQUEST_BYTES) {
+      warnings.push("正文超过单次导入上限，将自动改用分章导入。");
+    }
+    if (normalized.length > IMPORT_LARGE_TEXT_LENGTH) warnings.push("正文超过当前大书导入上限，需要先拆分文件。");
     return {
       wordCount,
       paragraphCount: paragraphs.length,
@@ -1370,6 +1376,97 @@
       requestBytes,
       warnings
     };
+  }
+
+  function normalizeImportText(text) {
+    return String(text || "")
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .replace(/[ \t]+\n/g, "\n")
+      .trim();
+  }
+
+  function countTextWords(text) {
+    return normalizeImportText(text).replace(/\s+/g, "").length;
+  }
+
+  function getChapterHeading(line) {
+    const trimmed = String(line || "").trim();
+    const match = trimmed.match(/^(第[零〇一二三四五六七八九十百千万两\d]+[章节回卷部][^\n]{0,60}|Chapter\s+\d+[^\n]{0,80})$/i);
+    return match ? trimmed.slice(0, 120) : "";
+  }
+
+  function splitLongChapter(chapter) {
+    if (chapter.text.length <= IMPORT_CHAPTER_MAX_TEXT_LENGTH) return [chapter];
+    const paragraphs = chapter.text.split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
+    const chunks = [];
+    let current = "";
+    paragraphs.forEach((paragraph) => {
+      if (current && current.length + paragraph.length + 2 > IMPORT_CHAPTER_TEXT_LENGTH) {
+        chunks.push(current);
+        current = paragraph;
+        return;
+      }
+      current = current ? `${current}\n\n${paragraph}` : paragraph;
+    });
+    if (current) chunks.push(current);
+    if (!chunks.length) {
+      for (let index = 0; index < chapter.text.length; index += IMPORT_CHAPTER_TEXT_LENGTH) {
+        chunks.push(chapter.text.slice(index, index + IMPORT_CHAPTER_TEXT_LENGTH));
+      }
+    }
+    return chunks.map((text, index) => ({
+      title: chunks.length === 1 ? chapter.title : `${chapter.title}（${index + 1}）`,
+      text
+    }));
+  }
+
+  function splitImportChapters(text) {
+    const normalized = normalizeImportText(text);
+    if (!normalized) return [];
+    const lines = normalized.split("\n");
+    const chapters = [];
+    let currentTitle = "";
+    let currentLines = [];
+
+    const flush = () => {
+      const body = currentLines.join("\n").trim();
+      if (!body) return;
+      chapters.push({
+        title: currentTitle || `第 ${chapters.length + 1} 章`,
+        text: body
+      });
+    };
+
+    lines.forEach((line) => {
+      const heading = getChapterHeading(line);
+      if (heading && currentLines.length) {
+        flush();
+        currentTitle = heading;
+        currentLines = [line];
+        return;
+      }
+      if (heading && !currentLines.length) {
+        currentTitle = heading;
+      }
+      currentLines.push(line);
+    });
+    flush();
+
+    const detected = chapters.filter((chapter) => getChapterHeading(chapter.title)).length >= 2;
+    const sourceChapters = detected ? chapters : [{ title: "正文", text: normalized }];
+    const split = sourceChapters.flatMap(splitLongChapter)
+      .map((chapter, index) => ({
+        title: chapter.title || `第 ${index + 1} 章`,
+        text: chapter.text.trim(),
+        wordCount: countTextWords(chapter.text)
+      }))
+      .filter((chapter) => chapter.wordCount >= IMPORT_MIN_WORDS);
+    return split.slice(0, IMPORT_CHAPTER_MAX_COUNT);
+  }
+
+  function shouldUseChapteredImport(stats, text) {
+    return text.length > IMPORT_MAX_TEXT_LENGTH || stats.requestBytes > IMPORT_MAX_REQUEST_BYTES;
   }
 
   function renderImportPreview(stats) {
@@ -1386,6 +1483,7 @@
         <span>章节<strong>${stats.chapterCount || "未识别"}</strong></span>
         <span>请求体<strong>${Math.ceil(stats.requestBytes / 1024)}KB</strong></span>
       </div>
+      ${(stats.requestBytes > IMPORT_MAX_REQUEST_BYTES || stats.wordCount > IMPORT_MAX_TEXT_LENGTH) ? `<p class="record-meta">保存时会自动分章上传，避免大文件一次提交失败。</p>` : ""}
       ${status}
     `;
   }
@@ -1404,6 +1502,51 @@
     const buffer = await readFileAsArrayBuffer(file);
     const decoder = new TextDecoder(encoding || "utf-8");
     return decoder.decode(buffer);
+  }
+
+  async function importChapteredBook({ title, author, tags, text, summary, submitButton }) {
+    const chapters = splitImportChapters(text);
+    if (!chapters.length) {
+      throw new Error("book_content_too_short");
+    }
+    if (chapters.length > IMPORT_CHAPTER_MAX_COUNT) {
+      throw new Error("too_many_chapters");
+    }
+    const tooLong = chapters.find((chapter) => chapter.text.length > IMPORT_CHAPTER_MAX_TEXT_LENGTH);
+    if (tooLong) {
+      throw new Error("book_chapter_too_long");
+    }
+    submitButton.textContent = `创建分章任务（${chapters.length}章）...`;
+    const started = await request(buildApiUrl("/api/books/import/start"), {
+      method: "POST",
+      body: JSON.stringify({
+        title,
+        author,
+        tags,
+        summary,
+        totalChapters: chapters.length,
+        wordCount: chapters.reduce((sum, chapter) => sum + chapter.wordCount, 0)
+      })
+    });
+    const bookId = started.book.id;
+    for (const [index, chapter] of chapters.entries()) {
+      submitButton.textContent = `正在上传第 ${index + 1}/${chapters.length} 章...`;
+      await request(buildApiUrl("/api/books/import/chapter"), {
+        method: "POST",
+        timeoutMs: 30000,
+        body: JSON.stringify({
+          bookId,
+          chapterIndex: index,
+          title: chapter.title,
+          text: chapter.text
+        })
+      });
+    }
+    submitButton.textContent = "正在整理目录...";
+    return request(buildApiUrl("/api/books/import/finish"), {
+      method: "POST",
+      body: JSON.stringify({ bookId, summary })
+    });
   }
 
   function renderImport() {
@@ -1527,20 +1670,22 @@
           toast("导入失败", "正文太短，至少需要 30 个字。");
           return;
         }
-        if (text.length > IMPORT_MAX_TEXT_LENGTH || stats.requestBytes > IMPORT_MAX_REQUEST_BYTES) {
-          toast("导入失败", "正文太长，建议分章节或缩短后导入。");
+        if (text.length > IMPORT_LARGE_TEXT_LENGTH) {
+          toast("导入失败", "正文超过当前大书导入上限，建议先拆分文件。");
           return;
         }
         try {
           submitButton.disabled = true;
           submitButton.textContent = "正在保存...";
-          const data = await request(buildApiUrl("/api/books/import"), {
-            method: "POST",
-            timeoutMs: 30000,
-            body: JSON.stringify({ title, author, tags, text, summary })
-          });
+          const data = shouldUseChapteredImport(stats, text)
+            ? await importChapteredBook({ title, author, tags, text, summary, submitButton })
+            : await request(buildApiUrl("/api/books/import"), {
+                method: "POST",
+                timeoutMs: 30000,
+                body: JSON.stringify({ title, author, tags, text, summary })
+              });
           state.stories = [...state.stories.filter((story) => story.id !== data.book.id), data.book];
-          toast("导入成功", "这本书已经可以用于创建房间。");
+          toast("导入成功", data.book.chaptered ? `已分成 ${data.book.chapterCount} 章，创建房间时请选择章节。` : "这本书已经可以用于创建房间。");
           navigate("/create");
         } catch (error) {
           const messages = {
@@ -1548,6 +1693,9 @@
             book_title_required: "请填写书名。",
             book_content_too_short: "正文太短。",
             book_content_too_long: "正文太长，当前单本上限约 50 万字符。",
+            book_chapter_too_long: "单章仍然过长，请先在文本里增加章节或分隔。",
+            too_many_chapters: "章节数量过多，请先拆分文件。",
+            book_not_found: "导入任务不存在，请重新导入。",
             payload_too_large: "提交内容过大，请拆分后再导入。",
             invalid_json: "提交数据格式异常，请刷新后重试。",
             request_timeout: "导入请求超时，建议先拆分正文或换到更稳定网络。"
@@ -1594,11 +1742,16 @@
                   <button type="button" class="story-card ${index === 0 ? "selected" : ""}" data-story="${story.id}">
                     <div class="tag">${story.cover}</div>
                     <h3>${escapeHtml(story.title)}</h3>
-                    <div class="story-meta">${story.wordCount} 字 · ${escapeHtml(story.author)}${story.source === "imported" ? " · 我的导入" : ""}</div>
+                    <div class="story-meta">${story.wordCount} 字 · ${escapeHtml(story.author)}${story.source === "imported" ? " · 我的导入" : ""}${story.chaptered ? ` · ${Number(story.chapterCount || 0)} 章` : ""}</div>
                     <p>${escapeHtml(story.summary)}</p>
                   </button>
                 `).join("")}
               </div>
+            </div>
+            <div class="field" id="chapter-select-field" hidden>
+              <label>选择章节</label>
+              <select class="select-input" id="chapter-select"></select>
+              <div class="muted">大书会按章节创建共读房间，避免一次加载整本书。</div>
             </div>
             <div class="field">
               <label>进度参考</label>
@@ -1632,19 +1785,49 @@
       `
     );
 
-    let storyId = initialStory.id;
+    let selectedStory = initialStory;
+    let selectedChapterStoryId = "";
     let threshold = 8;
+    const chapterField = document.getElementById("chapter-select-field");
+    const chapterSelect = document.getElementById("chapter-select");
+    const effectiveStoryId = () => selectedStory?.chaptered ? selectedChapterStoryId || `${selectedStory.id}::chapter-0` : selectedStory.id;
+    const updateChapterOptions = async (story) => {
+      if (!story?.chaptered) {
+        chapterField.hidden = true;
+        selectedChapterStoryId = "";
+        return;
+      }
+      chapterField.hidden = false;
+      chapterSelect.innerHTML = `<option>正在加载目录...</option>`;
+      try {
+        const data = await request(buildApiUrl(`/api/books/${encodeURIComponent(story.id)}/chapters`));
+        const chapters = data.chapters || [];
+        chapterSelect.innerHTML = chapters.map((chapter) => `
+          <option value="${escapeHtml(chapter.storyId)}">${chapter.chapterIndex + 1}. ${escapeHtml(chapter.title)} · ${Number(chapter.wordCount || 0)} 字</option>
+        `).join("");
+        selectedChapterStoryId = chapters[0]?.storyId || `${story.id}::chapter-0`;
+      } catch {
+        chapterSelect.innerHTML = `<option value="${escapeHtml(`${story.id}::chapter-0`)}">目录加载失败，默认第一章</option>`;
+        selectedChapterStoryId = `${story.id}::chapter-0`;
+      }
+    };
 
     document.querySelectorAll("[data-story]").forEach((node) => {
       node.addEventListener("click", () => {
-        storyId = node.getAttribute("data-story");
+        const storyId = node.getAttribute("data-story");
         const story = getStory(storyId);
+        selectedStory = story;
         document.querySelectorAll("[data-story]").forEach((el) => el.classList.remove("selected"));
         node.classList.add("selected");
         document.getElementById("selected-title").textContent = story.title;
         document.getElementById("selected-summary").textContent = story.summary;
+        updateChapterOptions(story);
       });
     });
+    chapterSelect.addEventListener("change", () => {
+      selectedChapterStoryId = chapterSelect.value;
+    });
+    updateChapterOptions(initialStory);
 
     document.querySelectorAll("[data-threshold]").forEach((node) => {
       node.addEventListener("click", () => {
@@ -1663,7 +1846,7 @@
         body: JSON.stringify({
           userId: user.id,
           name: user.name,
-          storyId,
+          storyId: effectiveStoryId(),
           threshold
         })
       });

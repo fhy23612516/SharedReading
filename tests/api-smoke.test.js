@@ -83,6 +83,8 @@ async function main() {
   assert.ok(frontendSource.includes('id="book-encoding"'), "import page should include encoding selector");
   assert.ok(frontendSource.includes("GBK / GB18030"), "import page should support common Chinese TXT encoding");
   assert.ok(frontendSource.includes("import-preview"), "import page should include local preview panel");
+  assert.ok(frontendSource.includes("/api/books/import/start"), "frontend should support chaptered import");
+  assert.ok(frontendSource.includes("chapter-select"), "create page should allow chapter selection");
 
   const resetStorePath = path.join(os.tmpdir(), `shared-reading-reset-${process.pid}.json`);
   fs.writeFileSync(resetStorePath, JSON.stringify({
@@ -278,6 +280,43 @@ async function main() {
     text: largeImportText
   }, authHeaders);
   assert.ok(largeImport.book.id, "import endpoint should accept a body larger than the default API body limit");
+
+  const chapteredStart = await request("/api/books/import/start", "POST", {
+    title: "Chaptered Smoke Book",
+    author: "Smoke Test",
+    tags: "chaptered import",
+    summary: "chaptered import smoke test",
+    totalChapters: 2
+  }, authHeaders);
+  assert.ok(chapteredStart.book.chaptered, "chaptered import should create a chaptered book");
+
+  await request("/api/books/import/chapter", "POST", {
+    bookId: chapteredStart.book.id,
+    chapterIndex: 0,
+    title: "第一章 开始",
+    text: "第一章正文用于测试分章导入能力，内容需要足够长，便于后端通过最短正文校验。\n\n这里是第一章第二段。"
+  }, authHeaders);
+  await request("/api/books/import/chapter", "POST", {
+    bookId: chapteredStart.book.id,
+    chapterIndex: 1,
+    title: "第二章 继续",
+    text: "第二章正文用于测试按章节创建共读房间，内容同样需要足够长，确保可以作为阅读正文。\n\n这里是第二章第二段。"
+  }, authHeaders);
+  const chapteredFinish = await request("/api/books/import/finish", "POST", {
+    bookId: chapteredStart.book.id
+  }, authHeaders);
+  assert.equal(chapteredFinish.book.chapterCount, 2, "chaptered import should keep chapter count");
+
+  const chapters = await request(`/api/books/${chapteredStart.book.id}/chapters`, "GET", null, authHeaders);
+  assert.equal(chapters.chapters.length, 2, "chapters endpoint should list uploaded chapters");
+  assert.ok(chapters.chapters[1].storyId.includes("::chapter-1"), "chapter should expose a virtual story id");
+
+  const chapterRoom = await request("/api/rooms", "POST", {
+    storyId: chapters.chapters[1].storyId,
+    threshold: 8
+  }, authHeaders);
+  assert.equal(chapterRoom.room.story.parentBookId, chapteredStart.book.id, "room can use a chapter story");
+  assert.equal(chapterRoom.room.story.chapterIndex, 1, "room should load the selected chapter");
 
   console.log("api smoke test passed");
 }
