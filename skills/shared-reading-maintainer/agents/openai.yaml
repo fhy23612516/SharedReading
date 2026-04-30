@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shared Reading Maintainer"
+  short_description: "Maintain SharedReading docs, releases, and deployment notes"
+  default_prompt: "Use this skill before making SharedReading feature, bug fix, API, schema, deployment, or documentation updates."

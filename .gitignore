@@ -20,3 +20,4 @@ data/store.json.tmp
 Thumbs.db
 .vscode/
 .idea/
+.codex/
