@@ -861,9 +861,9 @@
 
       <section class="hero-card portal-hero">
         <div class="portal-copy">
-          <div class="hero-kicker">双人共读 · 小说阅读器布局</div>
-          <h1 class="hero-title">找一本书，和 TA 一起读。</h1>
-          <p class="hero-copy">首页按书城和书架思路整理：搜索、收藏、继续阅读、创建房间都放在入口层；阅读页以正文为中心，评论和聊天作为辅助。</p>
+          <div class="hero-kicker">午夜共读室</div>
+          <h1 class="hero-title">翻到同一页，再慢慢聊。</h1>
+          <p class="hero-copy">选一本书，开一个双人房间；进度、段评和聊天都留在同一张阅读桌上。</p>
           <form class="portal-search" id="home-search-form">
             <input class="text-input" id="home-search-input" placeholder="搜索标题、作者、简介或正文" />
             <button class="button primary" type="submit">搜索</button>
@@ -876,6 +876,7 @@
           </div>
         </div>
         <div class="portal-side">
+          <div class="portal-emblem">READ<br>TOGETHER</div>
           <div class="stat-pill"><span>当前身份<strong>${user ? escapeHtml(user.name) : "未登录"}</strong></span></div>
           <div class="stat-pill"><span>内容数量<strong>${state.stories.length} 篇</strong></span></div>
           <div class="stat-pill"><span>房间恢复<strong>${activeRoomId ? "可继续" : "暂无"}</strong></span></div>
@@ -887,7 +888,7 @@
         <div class="section-heading">
           <div>
             <div class="section-kicker">书城</div>
-            <h2 class="section-title">可共读内容</h2>
+            <h2 class="section-title">今晚可以打开的书</h2>
           </div>
           <button class="button secondary" data-nav="/search">进入搜索</button>
         </div>
@@ -898,7 +899,7 @@
         <div class="section-heading">
           <div>
             <div class="section-kicker">最近记录</div>
-            <h2 class="section-title">共读房间动态</h2>
+            <h2 class="section-title">最近停留过的房间</h2>
           </div>
           <button class="button secondary" data-nav="/records">查看全部</button>
         </div>
@@ -1614,7 +1615,7 @@
           <section class="reader-card">
             <div class="notice-anchor">
               <div class="notice-card success" id="room-notice">
-                <h3 id="notice-title">一起读就行。</h3>
+                <h3 id="notice-title">你们在同一张书桌上。</h3>
                 <p id="notice-body">${otherMember ? `你们当前进度差 ${difference}% ，这里只做参考展示，不会强制拦截阅读。` : "对方加入后，你们就能看到彼此的进度和消息动态。"}</p>
               </div>
               <div id="left-notice" style="display:none;"></div>
