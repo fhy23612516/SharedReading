@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frontier UI Design"
+  short_description: "Create distinctive, production-grade frontend UI"
+  default_prompt: "Use this skill before designing or redesigning any frontend UI, app screen, landing page, dashboard, or component."
