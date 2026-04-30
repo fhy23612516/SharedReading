@@ -487,6 +487,27 @@ button:disabled {
   color: #ffd8c9;
 }
 
+.recovery-card {
+  margin-bottom: 18px;
+  border-color: rgba(110, 231, 216, 0.34);
+  background:
+    linear-gradient(135deg, rgba(110, 231, 216, 0.12), rgba(227, 83, 45, 0.08)),
+    rgba(246, 236, 215, 0.08);
+}
+
+.recovery-code-value {
+  display: block;
+  margin: 14px 0;
+  padding: 16px;
+  border: 1px solid rgba(110, 231, 216, 0.34);
+  border-radius: 16px;
+  background: rgba(11, 12, 13, 0.52);
+  color: var(--cyan);
+  font-size: clamp(20px, 4vw, 32px);
+  letter-spacing: 0.08em;
+  word-break: break-all;
+}
+
 .story-card,
 .record-card,
 .sidebar-card,

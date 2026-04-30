@@ -55,7 +55,8 @@
     commentItems: [],
     activeCommentScope: "chapter",
     activeParagraphIndex: null,
-    activeParagraphText: ""
+    activeParagraphText: "",
+    pendingRecoveryCode: ""
   };
 
   const APP_CONFIG = window.__APP_CONFIG__ || {};
@@ -954,49 +955,132 @@
     }
   }
 
+  function renderRecoveryCodeNotice() {
+    if (!state.pendingRecoveryCode) return "";
+    return `
+      <div class="record-card recovery-card">
+        <div class="meta-kicker">密码恢复码，只显示这一次</div>
+        <h3>请先保存这串恢复码</h3>
+        <p class="record-meta">以后忘记密码时，需要用“账号 + 恢复码”重置密码。重新生成或重置密码后，旧恢复码会失效。</p>
+        <code class="recovery-code-value" id="recovery-code-value">${escapeHtml(state.pendingRecoveryCode)}</code>
+        <div class="button-row">
+          <button class="button primary" id="copy-recovery-code" type="button">复制恢复码</button>
+          <button class="button secondary" id="dismiss-recovery-code" type="button">我已保存，进入首页</button>
+        </div>
+      </div>
+    `;
+  }
+
   function renderAuth() {
+    const authContent = state.authToken ? `
+      ${renderRecoveryCodeNotice()}
+      <div class="card-grid">
+        <div class="record-card">
+          <div class="meta-kicker">当前已登录</div>
+          <h3>${escapeHtml(state.user?.nickname || state.user?.name || "读者")}</h3>
+          <p class="record-meta">如果你担心忘记密码，可以重新生成一串恢复码。新恢复码生成后，旧恢复码会立即失效。</p>
+          <div class="button-row">
+            <button class="button secondary" id="refresh-recovery-code" type="button">重新生成恢复码</button>
+            <button class="button primary" data-nav="/">回到首页</button>
+          </div>
+        </div>
+      </div>
+    ` : `
+      <div class="card-grid">
+        <form id="login-form" class="record-card form-stack">
+          <div class="meta-kicker">登录</div>
+          <div class="field">
+            <label>账号</label>
+            <input class="text-input" id="login-account" autocomplete="username" />
+          </div>
+          <div class="field">
+            <label>密码</label>
+            <input class="text-input" id="login-password" type="password" autocomplete="current-password" />
+          </div>
+          <button class="button primary" type="submit">登录</button>
+        </form>
+        <form id="register-form" class="record-card form-stack">
+          <div class="meta-kicker">注册</div>
+          <div class="field">
+            <label>账号</label>
+            <input class="text-input" id="register-account" autocomplete="username" placeholder="至少 3 位" />
+          </div>
+          <div class="field">
+            <label>昵称</label>
+            <input class="text-input" id="register-nickname" maxlength="12" placeholder="12 字以内" />
+          </div>
+          <div class="field">
+            <label>密码</label>
+            <input class="text-input" id="register-password" type="password" autocomplete="new-password" placeholder="至少 8 位" />
+          </div>
+          <button class="button secondary" type="submit">注册并生成恢复码</button>
+        </form>
+        <form id="reset-password-form" class="record-card form-stack">
+          <div class="meta-kicker">找回密码</div>
+          <div class="field">
+            <label>账号</label>
+            <input class="text-input" id="reset-account" autocomplete="username" />
+          </div>
+          <div class="field">
+            <label>恢复码</label>
+            <input class="text-input" id="reset-code" autocomplete="one-time-code" placeholder="例如 SR-AB12-CD34-EF56" />
+          </div>
+          <div class="field">
+            <label>新密码</label>
+            <input class="text-input" id="reset-password" type="password" autocomplete="new-password" placeholder="至少 8 位" />
+          </div>
+          <button class="button ghost" type="submit">重置密码并登录</button>
+        </form>
+      </div>
+    `;
+
     app.innerHTML = pageChrome(
       "账号登录",
       `
         <section class="panel">
           <div class="section-kicker">统一账号</div>
           <h2 class="section-title">Web 和小程序共用这一套账号</h2>
-          <p class="hero-copy">不依赖微信或 QQ 登录。注册后，网页端和小程序端都可以用同一个账号密码登录。</p>
-          <div class="card-grid">
-            <form id="login-form" class="record-card form-stack">
-              <div class="meta-kicker">登录</div>
-              <div class="field">
-                <label>账号</label>
-                <input class="text-input" id="login-account" autocomplete="username" />
-              </div>
-              <div class="field">
-                <label>密码</label>
-                <input class="text-input" id="login-password" type="password" autocomplete="current-password" />
-              </div>
-              <button class="button primary" type="submit">登录</button>
-            </form>
-            <form id="register-form" class="record-card form-stack">
-              <div class="meta-kicker">注册</div>
-              <div class="field">
-                <label>账号</label>
-                <input class="text-input" id="register-account" autocomplete="username" placeholder="至少 3 位" />
-              </div>
-              <div class="field">
-                <label>昵称</label>
-                <input class="text-input" id="register-nickname" maxlength="12" placeholder="12 字以内" />
-              </div>
-              <div class="field">
-                <label>密码</label>
-                <input class="text-input" id="register-password" type="password" autocomplete="new-password" placeholder="至少 8 位" />
-              </div>
-              <button class="button secondary" type="submit">注册并登录</button>
-            </form>
-          </div>
+          <p class="hero-copy">不依赖微信或 QQ 登录。注册后会生成一串恢复码，忘记密码时可以用它重置。</p>
+          ${authContent}
         </section>
       `
     );
 
-    document.getElementById("login-form").addEventListener("submit", async (event) => {
+    const copyRecoveryButton = document.getElementById("copy-recovery-code");
+    if (copyRecoveryButton) {
+      copyRecoveryButton.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(state.pendingRecoveryCode);
+          toast("已复制", "恢复码已复制到剪贴板。");
+        } catch {
+          toast("复制失败", "请手动选中恢复码保存。");
+        }
+      });
+    }
+
+    const dismissRecoveryButton = document.getElementById("dismiss-recovery-code");
+    if (dismissRecoveryButton) {
+      dismissRecoveryButton.addEventListener("click", () => {
+        state.pendingRecoveryCode = "";
+        navigate("/");
+      });
+    }
+
+    const refreshRecoveryButton = document.getElementById("refresh-recovery-code");
+    if (refreshRecoveryButton) {
+      refreshRecoveryButton.addEventListener("click", async () => {
+        try {
+          const data = await request(buildApiUrl("/api/auth/recovery-code"), { method: "POST" });
+          state.pendingRecoveryCode = data.recoveryCode || "";
+          toast("已生成新恢复码", "旧恢复码已经失效，请保存新的恢复码。");
+          render();
+        } catch (error) {
+          toast("生成失败", error.message === "unauthorized" ? "请先登录账号。" : "请稍后再试。");
+        }
+      });
+    }
+
+    document.getElementById("login-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const account = document.getElementById("login-account").value.trim();
       const password = document.getElementById("login-password").value;
@@ -1007,6 +1091,7 @@
         });
         saveAuthToken(data.token);
         state.user = data.user;
+        state.pendingRecoveryCode = "";
         saveSessionUser(data.user);
         await refreshBootstrapData();
         toast("登录成功", "已切换到你的正式账号。");
@@ -1016,7 +1101,7 @@
       }
     });
 
-    document.getElementById("register-form").addEventListener("submit", async (event) => {
+    document.getElementById("register-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const account = document.getElementById("register-account").value.trim();
       const nickname = document.getElementById("register-nickname").value.trim();
@@ -1028,10 +1113,11 @@
         });
         saveAuthToken(data.token);
         state.user = data.user;
+        state.pendingRecoveryCode = data.recoveryCode || "";
         saveSessionUser(data.user);
         await refreshBootstrapData();
-        toast("注册成功", "账号已创建并登录。");
-        navigate("/");
+        toast("注册成功", "请先保存密码恢复码。");
+        render();
       } catch (error) {
         const messages = {
           invalid_account: "账号需至少 3 位，只能使用常见字母数字和符号。",
@@ -1040,6 +1126,33 @@
           name_required: "请填写昵称。"
         };
         toast("注册失败", messages[error.message] || "请检查后重试。");
+      }
+    });
+
+    document.getElementById("reset-password-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const account = document.getElementById("reset-account").value.trim();
+      const recoveryCode = document.getElementById("reset-code").value.trim();
+      const password = document.getElementById("reset-password").value;
+      try {
+        const data = await request(buildApiUrl("/api/auth/password/reset"), {
+          method: "POST",
+          body: JSON.stringify({ account, recoveryCode, password })
+        });
+        saveAuthToken(data.token);
+        state.user = data.user;
+        state.pendingRecoveryCode = data.recoveryCode || "";
+        saveSessionUser(data.user);
+        await refreshBootstrapData();
+        toast("密码已重置", "请保存新的密码恢复码。");
+        render();
+      } catch (error) {
+        const messages = {
+          invalid_account: "账号格式不正确。",
+          weak_password: "新密码至少 8 位。",
+          invalid_recovery_code: "账号或恢复码不正确。"
+        };
+        toast("重置失败", messages[error.message] || "请稍后再试。");
       }
     });
   }

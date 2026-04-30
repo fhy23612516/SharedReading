@@ -97,16 +97,40 @@ async function main() {
     nickname: "Alice"
   });
   assert.ok(registered.token, "register should return a token");
+  assert.ok(registered.recoveryCode, "register should return a one-time recovery code");
+
+  const reset = await request("/api/auth/password/reset", "POST", {
+    account: `alice-${process.pid}`,
+    recoveryCode: registered.recoveryCode,
+    password: "resetpass123"
+  });
+  assert.ok(reset.token, "password reset should return a token");
+  assert.ok(reset.recoveryCode, "password reset should rotate and return a new recovery code");
+  assert.notEqual(reset.recoveryCode, registered.recoveryCode, "password reset should invalidate the previous recovery code");
+
+  await assert.rejects(
+    request("/api/auth/password/reset", "POST", {
+      account: `alice-${process.pid}`,
+      recoveryCode: registered.recoveryCode,
+      password: "anotherpass123"
+    }),
+    (error) => error.message === "invalid_recovery_code",
+    "old recovery code should not be reusable"
+  );
 
   const login = await request("/api/auth/login", "POST", {
     account: `alice-${process.pid}`,
-    password: "12345678"
+    password: "resetpass123"
   });
   assert.ok(login.token, "login should return a token");
 
   const authHeaders = { Authorization: `Bearer ${login.token}` };
   const me = await request("/api/auth/me", "GET", null, authHeaders);
   assert.equal(me.user.account, `alice-${process.pid}`, "me should return logged in user");
+
+  const rotatedRecovery = await request("/api/auth/recovery-code", "POST", null, authHeaders);
+  assert.ok(rotatedRecovery.recoveryCode, "logged in user should be able to generate a new recovery code");
+  assert.notEqual(rotatedRecovery.recoveryCode, reset.recoveryCode, "manual recovery code generation should rotate the code");
 
   const feedback = await request("/api/feedback", "POST", {
     type: "suggestion",

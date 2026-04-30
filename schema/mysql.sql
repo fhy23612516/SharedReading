@@ -10,11 +10,28 @@ CREATE TABLE IF NOT EXISTS users (
   nickname VARCHAR(40) NOT NULL,
   avatar VARCHAR(16),
   password_hash VARCHAR(255),
+  password_recovery_hash VARCHAR(128),
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
   last_active_at DATETIME,
   INDEX idx_users_account (account)
 );
+
+SET @has_password_recovery_hash := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'users'
+    AND COLUMN_NAME = 'password_recovery_hash'
+);
+SET @add_password_recovery_hash := IF(
+  @has_password_recovery_hash = 0,
+  'ALTER TABLE users ADD COLUMN password_recovery_hash VARCHAR(128) NULL AFTER password_hash',
+  'SELECT 1'
+);
+PREPARE add_password_recovery_hash_stmt FROM @add_password_recovery_hash;
+EXECUTE add_password_recovery_hash_stmt;
+DEALLOCATE PREPARE add_password_recovery_hash_stmt;
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
   token_hash VARCHAR(128) PRIMARY KEY,

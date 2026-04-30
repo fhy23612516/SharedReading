@@ -126,6 +126,7 @@ async function ensureMysqlSchema() {
       nickname VARCHAR(40) NOT NULL,
       avatar VARCHAR(16),
       password_hash VARCHAR(255),
+      password_recovery_hash VARCHAR(128),
       created_at DATETIME NOT NULL,
       updated_at DATETIME NOT NULL,
       last_active_at DATETIME,
@@ -280,6 +281,26 @@ async function ensureMysqlSchema() {
   for (const statement of statements) {
     await pool.query(statement);
   }
+  await ensureMysqlColumn(
+    pool,
+    "users",
+    "password_recovery_hash",
+    "ALTER TABLE users ADD COLUMN password_recovery_hash VARCHAR(128) NULL AFTER password_hash"
+  );
+}
+
+async function ensureMysqlColumn(pool, tableName, columnName, alterSql) {
+  const [rows] = await pool.query(
+    `SELECT COUNT(*) AS count
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = ?
+        AND COLUMN_NAME = ?`,
+    [tableName, columnName]
+  );
+  if (!Number(rows[0]?.count || 0)) {
+    await pool.query(alterSql);
+  }
 }
 
 async function readMysqlState() {
@@ -324,6 +345,7 @@ async function readMysqlState() {
       nickname: row.nickname,
       avatar: row.avatar || (row.nickname || "R").slice(0, 1),
       passwordHash: row.password_hash || undefined,
+      passwordRecoveryHash: row.password_recovery_hash || undefined,
       createdAt: toIso(row.created_at) || now(),
       updatedAt: toIso(row.updated_at) || now(),
       lastActiveAt: toIso(row.last_active_at) || toIso(row.updated_at) || now()
@@ -520,14 +542,15 @@ async function saveMysqlState() {
     for (const user of Object.values(state.users)) {
       await connection.query(
         `INSERT INTO users
-          (id, account, nickname, avatar, password_hash, created_at, updated_at, last_active_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, account, nickname, avatar, password_hash, password_recovery_hash, created_at, updated_at, last_active_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           user.id,
           user.account || null,
           user.nickname || user.name || "Reader",
           user.avatar || (user.nickname || user.name || "R").slice(0, 1),
           user.passwordHash || null,
+          user.passwordRecoveryHash || null,
           toMysqlDate(user.createdAt) || toMysqlDate(now()),
           toMysqlDate(user.updatedAt || user.lastActiveAt || now()) || toMysqlDate(now()),
           toMysqlDate(user.lastActiveAt) || null
@@ -842,6 +865,27 @@ function hashToken(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+function generateRecoveryCode() {
+  const raw = crypto.randomBytes(6).toString("hex").toUpperCase();
+  return `SR-${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`;
+}
+
+function normalizeRecoveryCode(code) {
+  return String(code || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function hashRecoveryCode(code) {
+  return hashToken(normalizeRecoveryCode(code));
+}
+
+function verifyRecoveryCode(code, recoveryHash) {
+  const normalized = normalizeRecoveryCode(code);
+  if (!normalized || normalized.length < 10 || !recoveryHash) return false;
+  const actual = Buffer.from(hashRecoveryCode(normalized), "hex");
+  const expected = Buffer.from(recoveryHash, "hex");
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
   const derived = crypto.scryptSync(String(password), salt, 64).toString("hex");
   return `scrypt:${salt}:${derived}`;
@@ -887,6 +931,23 @@ function createSession(userId) {
   };
   persistState();
   return token;
+}
+
+function issueRecoveryCode(user) {
+  const recoveryCode = generateRecoveryCode();
+  user.passwordRecoveryHash = hashRecoveryCode(recoveryCode);
+  user.updatedAt = now();
+  persistState();
+  return recoveryCode;
+}
+
+function revokeUserSessions(userId) {
+  const revokedAt = now();
+  Object.values(state.authSessions || {}).forEach((session) => {
+    if (session.userId === userId && !session.revokedAt) {
+      session.revokedAt = revokedAt;
+    }
+  });
 }
 
 function getBearerToken(req) {
@@ -1692,9 +1753,10 @@ async function handleApi(req, res, url) {
       lastActiveAt: createdAt
     };
     state.users[user.id] = user;
+    const recoveryCode = issueRecoveryCode(user);
     const token = createSession(user.id);
     persistState();
-    sendJson(res, 201, { token, user: publicUser(user) });
+    sendJson(res, 201, { token, user: publicUser(user), recoveryCode });
     return true;
   }
 
@@ -1716,6 +1778,51 @@ async function handleApi(req, res, url) {
     const token = createSession(user.id);
     persistState();
     sendJson(res, 200, { token, user: publicUser(user) });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/recovery-code") {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      sendJson(res, 401, { error: "unauthorized" });
+      return true;
+    }
+    const recoveryCode = issueRecoveryCode(user);
+    sendJson(res, 200, { recoveryCode });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/password/reset") {
+    const body = await parseBody(req).catch((error) => ({ __error: error.message }));
+    if (body.__error) {
+      sendJson(res, 400, { error: body.__error });
+      return true;
+    }
+    const account = normalizeAccount(body.account);
+    const recoveryCode = String(body.recoveryCode || body.code || "");
+    const password = String(body.password || body.newPassword || "");
+    if (!/^[a-z0-9_@.+-]{3,80}$/i.test(account)) {
+      sendJson(res, 400, { error: "invalid_account" });
+      return true;
+    }
+    if (password.length < 8) {
+      sendJson(res, 400, { error: "weak_password" });
+      return true;
+    }
+    const user = Object.values(state.users).find((item) => normalizeAccount(item.account) === account);
+    if (!user || !verifyRecoveryCode(recoveryCode, user.passwordRecoveryHash)) {
+      sendJson(res, 401, { error: "invalid_recovery_code" });
+      return true;
+    }
+    user.passwordHash = hashPassword(password);
+    user.lastActiveAt = now();
+    revokeUserSessions(user.id);
+    const nextRecoveryCode = generateRecoveryCode();
+    user.passwordRecoveryHash = hashRecoveryCode(nextRecoveryCode);
+    user.updatedAt = now();
+    const token = createSession(user.id);
+    persistState();
+    sendJson(res, 200, { token, user: publicUser(user), recoveryCode: nextRecoveryCode });
     return true;
   }
 
