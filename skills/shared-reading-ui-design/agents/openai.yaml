@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shared Reading UI Design"
+  short_description: "Design SharedReading as a polished fiction reading app"
+  default_prompt: "Use this skill before changing SharedReading homepage, bookstore, bookshelf, reader, comments, chat, mobile layout, or CSS."
