@@ -9,6 +9,7 @@
     "start:frontend": "node frontend.server.js",
     "start:public": "node frontend.server.js",
     "mcp": "node tools/shared-reading-mcp.js",
+    "reset-password": "node tools/reset-password.js",
     "test": "node tests/api-smoke.test.js"
   },
   "dependencies": {

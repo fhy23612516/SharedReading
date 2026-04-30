@@ -139,7 +139,27 @@ curl http://127.0.0.1/api/bootstrap
 6. 本次新增的书架、浏览记录和评论数据是账号数据，生产环境建议尽早启用 MySQL，避免长期依赖本机 JSON 文件。
 7. 旧账号没有恢复码，需要登录后在账号页手动生成一次；新注册账号会自动获得恢复码。
 
-## 8. 备份建议
+## 8. 旧账号忘记密码
+
+如果旧账号忘记密码且没有恢复码，可以在服务器本地用管理脚本重置。必须先停止后端 API，避免运行中的内存状态覆盖脚本写入的数据。
+
+```bash
+cd /opt/shared-reading
+pm2 stop shared-reading-api
+node tools/reset-password.js "账号"
+pm2 start ecosystem.config.cjs --only shared-reading-api --update-env
+pm2 save
+```
+
+脚本会提示输入新密码，并输出新的恢复码。恢复码只显示一次，需要立即保存。
+
+如果确认终端历史安全，也可以直接传新密码：
+
+```bash
+node tools/reset-password.js "账号" "新密码"
+```
+
+## 9. 备份建议
 
 导出：
 

@@ -122,6 +122,28 @@ npm.cmd test
 
 如果你的 PowerShell 允许执行 `npm.ps1`，也可以直接运行 `npm test`。
 
+## 管理脚本
+
+### 重置旧账号密码
+
+旧账号如果忘记密码且没有恢复码，可以在服务器本地使用脚本重置。由于服务运行时会把内存状态写回存储，必须先停止后端 API，再执行脚本，最后重启后端。
+
+```bash
+cd /opt/shared-reading
+pm2 stop shared-reading-api
+node tools/reset-password.js "账号"
+pm2 start ecosystem.config.cjs --only shared-reading-api --update-env
+pm2 save
+```
+
+脚本会交互式输入新密码，并输出新的恢复码。恢复码只显示一次，需要立即保存。
+
+如果确认终端历史安全，也可以直接传新密码：
+
+```bash
+node tools/reset-password.js "账号" "新密码"
+```
+
 ## ngrok 说明
 
 当前公网访问时，`ngrok` 转发的是前端：
@@ -345,6 +367,7 @@ https://shareread.heiheihei.pw
 23. [版本记录.md](</E:/Program Files/VibeCoding/SharedReading/版本记录.md>)
 24. [MCP使用说明.md](</E:/Program Files/VibeCoding/SharedReading/MCP使用说明.md>)
 25. [tools/shared-reading-mcp.js](</E:/Program Files/VibeCoding/SharedReading/tools/shared-reading-mcp.js>)
+26. [tools/reset-password.js](</E:/Program Files/VibeCoding/SharedReading/tools/reset-password.js>)
 
 ## 当前产品规则
 
@@ -377,7 +400,7 @@ https://shareread.heiheihei.pw
 6. 划线和书签同步到账号与小程序
 7. 评论点赞、回复、举报和审核
 8. 更完整的历史记录检索和详情页
-9. 登录安全增强，例如限流、验证码、密码找回
+9. 登录安全增强，例如限流、验证码、邮箱或短信验证
 10. 多设备、多浏览器、弱网条件下的自动化 UI 回归测试
 
 下一阶段详细设计见 [后续迭代设计-账号反馈MySQL性能.md](</E:/Program Files/VibeCoding/SharedReading/后续迭代设计-账号反馈MySQL性能.md>)。

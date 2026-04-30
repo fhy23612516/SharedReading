@@ -3,6 +3,7 @@ const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
+const { resetJsonPassword } = require("../tools/reset-password");
 
 const port = 4100 + Math.floor(Math.random() * 800);
 const storePath = path.join(os.tmpdir(), `shared-reading-smoke-${process.pid}.json`);
@@ -82,6 +83,34 @@ async function main() {
   assert.ok(frontendSource.includes('id="book-encoding"'), "import page should include encoding selector");
   assert.ok(frontendSource.includes("GBK / GB18030"), "import page should support common Chinese TXT encoding");
   assert.ok(frontendSource.includes("import-preview"), "import page should include local preview panel");
+
+  const resetStorePath = path.join(os.tmpdir(), `shared-reading-reset-${process.pid}.json`);
+  fs.writeFileSync(resetStorePath, JSON.stringify({
+    users: {
+      "user-reset": {
+        id: "user-reset",
+        account: "reset-user",
+        nickname: "Reset User",
+        passwordHash: "old-hash"
+      }
+    },
+    authSessions: {
+      "token-reset": {
+        tokenHash: "token-reset",
+        userId: "user-reset",
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 86400000).toISOString(),
+        revokedAt: null
+      }
+    }
+  }), "utf8");
+  const resetResult = await resetJsonPassword({ STORE_PATH: resetStorePath }, "reset-user", "resetpass123");
+  const resetState = JSON.parse(fs.readFileSync(resetStorePath, "utf8"));
+  assert.match(resetResult.recoveryCode, /^SR-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}$/, "reset script should generate a recovery code");
+  assert.ok(resetState.users["user-reset"].passwordHash.startsWith("scrypt:"), "reset script should hash new password");
+  assert.ok(resetState.users["user-reset"].passwordRecoveryHash, "reset script should store recovery code hash");
+  assert.ok(resetState.authSessions["token-reset"].revokedAt, "reset script should revoke old sessions");
+  fs.rmSync(resetStorePath, { force: true });
 
   await listen();
   const bootstrap = await waitForServer();
